@@ -1,0 +1,30 @@
+# 白名单策略：默认忽略一切,只显式放行"下载代码"相关文件。
+# 目的：只上传代码/配置/文档,不上传 cache、output 等生成结果。
+
+*
+!*/
+
+# 代码 / 配置 / 文档
+!*.py
+!*.md
+!*.sh
+!*.ps1
+!*.cfg
+!*.ini
+!*.toml
+!*.yaml
+!*.yml
+!requirements*.txt
+!.env.example
+!.gitignore
+
+# 显式保留：合约清单快照(脚本运行时的输入数据,非本次产出)
+!/coinglass-history/symbols/
+!/coinglass-history/symbols/*.json
+
+# 保险：即使误放行,也不要 Python 缓存/字节码
+__pycache__/
+*.pyc
+
+# 保险：真正的 .env 绝不上传(即使以后出现)
+.env

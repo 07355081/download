@@ -59,6 +59,11 @@ SYMBOL_SYNONYMS = {
     "UKOIL": "BZ", "BRENTOIL": "BRENT", "NATGAS": "NG",
 }
 
+# 已知与 tradfi 符号表 / tag Stocks 撞名的加密资产：强制判为非 tradfi（None），
+# 避免把真加密（QNT=Quant、DIA=DIA 预言机）误当股票/指数而从 coinglass 下线。
+# 如发现更多撞名，往这里补即可（单一真源，native 发现 + coinglass 排除 + route 均生效）。
+CRYPTO_OVERRIDE = {"QNT", "DIA"}
+
 
 def normalize_base(base: str) -> str:
     b = (base or "").strip().upper()
@@ -105,6 +110,8 @@ def classify_sector(base_raw: str, *, native_stock: bool = False) -> str | None:
     大宗 / 指数用固定集合判定。
     """
     base = normalize_base(strip_stock_suffix(base_raw))
+    if base in CRYPTO_OVERRIDE:
+        return None
     if base in FOREX_BASES:
         return None
     if base in COMMODITY_BASES:
@@ -141,17 +148,55 @@ class HttpResult:
 _SSL_CTX = ssl.create_default_context()
 
 
-def _proxy_handler() -> urllib.request.BaseHandler | None:
-    proxy = (
+def _current_proxy() -> str:
+    return (
         os.environ.get("HTTPS_PROXY")
         or os.environ.get("https_proxy")
         or os.environ.get("HTTP_PROXY")
         or os.environ.get("http_proxy")
         or os.environ.get("ALL_PROXY")
         or os.environ.get("all_proxy")
+        or ""
     )
+
+
+def _socks_handler(proxy: str) -> urllib.request.BaseHandler:
+    """为 socks4/socks5/socks5h 代理（如 ssh -D 建立的本地 SOCKS）构造 urllib handler。
+
+    需要 PySocks（pip install PySocks）。socks5h 表示由代理端解析 DNS（跨境场景必须）。
+    """
+    try:
+        import socks  # type: ignore
+        from sockshandler import SocksiPyHandler  # type: ignore
+    except ImportError as e:  # noqa: BLE001
+        raise RuntimeError(
+            "检测到 SOCKS 代理但未安装 PySocks。请先 `pip install PySocks`。"
+            f" 代理={proxy}"
+        ) from e
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(proxy)
+    scheme = (parsed.scheme or "").lower()
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 1080
+    if scheme in ("socks5", "socks5h"):
+        ptype = socks.PROXY_TYPE_SOCKS5
+    elif scheme in ("socks4", "socks4a"):
+        ptype = socks.PROXY_TYPE_SOCKS4
+    else:
+        ptype = socks.PROXY_TYPE_SOCKS5
+    # socks5h / socks4a → rdns=True（远端解析域名）；socks5/socks4 亦默认远端解析更稳。
+    rdns = scheme in ("socks5h", "socks4a", "socks5", "socks4")
+    return SocksiPyHandler(ptype, host, port, rdns, parsed.username, parsed.password)
+
+
+def _proxy_handler() -> urllib.request.BaseHandler | None:
+    proxy = _current_proxy()
     if not proxy:
         return None
+    if proxy.lower().startswith("socks"):
+        return _socks_handler(proxy)
     return urllib.request.ProxyHandler({"http": proxy, "https": proxy})
 
 

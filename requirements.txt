@@ -1,2 +1,4 @@
 requests>=2.28.0
 pandas>=2.0.0
+# tradfi 下载走 ssh -D 建立的 SOCKS 代理时需要（ALL_PROXY=socks5h://127.0.0.1:1080）
+PySocks>=1.7.1

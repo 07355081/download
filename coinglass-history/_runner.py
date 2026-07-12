@@ -68,19 +68,26 @@ def run_per_instrument(
 
     by_ex = C.load_instruments(market)
     tuples: list[tuple[str, str, str]] = []
+    excluded_tradfi = 0
     for exchange, items in sorted(by_ex.items()):
         if ex_f and exchange not in ex_f:
             continue
         for it in items:
             iid = it.get("instrument_id") or ""
+            # coinglass 停 tradfi：Stocks/Commodities/Indices 改由交易所直连独占，此处排除
+            base = it.get("base_asset") or C.extract_base_from_instrument(iid)
+            if C.is_tradfi_base(base):
+                excluded_tradfi += 1
+                continue
             if sym_f and iid not in sym_f:
-                base = it.get("base_asset") or ""
                 if base not in sym_f and not any(iid.startswith(s) for s in sym_f):
                     continue
             for interval in intervals:
                 tuples.append((exchange, iid, interval))
     if args.max_tuples and args.max_tuples > 0:
         tuples = tuples[: args.max_tuples]
+    if excluded_tradfi:
+        print(f"[tradfi-excluded] skipped {excluded_tradfi} coinglass tradfi instruments (Stocks/Commodities/Indices)", flush=True)
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     status_csv.parent.mkdir(parents=True, exist_ok=True)

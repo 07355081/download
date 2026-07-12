@@ -10,6 +10,8 @@ Layout:
   6) options flat files are copied to public/json/option-iv/
   7) stablecoin flat files are copied to public/json/stablecoin/
   8) mining-shutdown-price flat files are copied to public/json/mining-shutdown-price/
+  9) tradfi exchange-direct: tradfi/output/json/tradfi-price/*.json mirrored 1:1 to
+     public/json/tradfi-price/ (isolated dir; safe mirror-delete here, never touches coinglass)
 
 Sources:
   - <repo>/data-download/coinglass-history/<module>/output/json/*.json
@@ -65,7 +67,19 @@ BTC_INDEX_ROOT = SCRIPT_DIR / "btc-index"
 OPTIONS_ROOT = SCRIPT_DIR / "options"
 STABLECOIN_ROOT = SCRIPT_DIR / "stablecoin"
 MINING_SHUTDOWN_PRICE_ROOT = SCRIPT_DIR / "mining-shutdown-price"
-DEFAULT_DEST = Path(r"C:\code\data-dashboard\public\json")
+# TradFi 交易所直连输出（独立目录，与 coinglass 完全隔离）
+TRADFI_ROOT = SCRIPT_DIR / "tradfi"
+
+# 目标默认取同级 data-dashboard（跨机器稳健：download 与 dashboard 同父目录），
+# 找不到再回退到旧的绝对路径。可用 --dest 覆盖。
+def _default_dest() -> Path:
+    sibling = SCRIPT_DIR.parent / "data-dashboard" / "public" / "json"
+    if sibling.parent.parent.is_dir():  # data-dashboard 存在
+        return sibling
+    return Path(r"C:\code\data-dashboard\public\json")
+
+
+DEFAULT_DEST = _default_dest()
 
 # Retired download modules: skip mirror sync (leave existing dashboard JSON untouched).
 COINGLASS_SYNC_EXCLUDE: frozenset[str] = frozenset({
@@ -232,7 +246,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--only",
-        choices=("all", "coinglass", "treasuries", "cex", "tag", "btc-index", "options", "stablecoin", "mining-shutdown-price"),
+        choices=("all", "coinglass", "treasuries", "cex", "tag", "btc-index", "options", "stablecoin", "mining-shutdown-price", "tradfi"),
         default="all",
         help="Choose dataset to copy (default: all)",
     )
@@ -249,6 +263,7 @@ def main() -> None:
     copy_options = args.only in ("all", "options")
     copy_stablecoin = args.only in ("all", "stablecoin")
     copy_mining_shutdown_price = args.only in ("all", "mining-shutdown-price")
+    copy_tradfi = args.only in ("all", "tradfi")
 
     modules = list_coinglass_modules(args.module) if copy_coinglass else []
     treasuries_src = TREASURIES_ROOT / "output" / "json"
@@ -258,6 +273,8 @@ def main() -> None:
     options_src = OPTIONS_ROOT / "output" / "json"
     stablecoin_src = STABLECOIN_ROOT / "output" / "json"
     mining_shutdown_price_src = MINING_SHUTDOWN_PRICE_ROOT / "output" / "json"
+    # tradfi 交易所直连：独立目录 tradfi-price，1:1 镜像（可安全 mirror-delete 本目录，不碰 coinglass）
+    tradfi_price_src = TRADFI_ROOT / "output" / "json" / "tradfi-price"
 
     mode = "DRY-RUN" if args.dry_run else (
         "FORCE-OVERWRITE" if args.force else "mirror (skip same-size copy)"
@@ -268,7 +285,8 @@ def main() -> None:
     print(
         f"datasets:    coinglass={copy_coinglass} treasuries={copy_treasuries} "
         f"cex={copy_cex} tag={copy_tag} btc-index={copy_btc_index} options={copy_options} "
-        f"stablecoin={copy_stablecoin} mining-shutdown-price={copy_mining_shutdown_price}"
+        f"stablecoin={copy_stablecoin} mining-shutdown-price={copy_mining_shutdown_price} "
+        f"tradfi={copy_tradfi}"
     )
     print(f"modules:     {len(modules)}\n")
 
@@ -446,6 +464,27 @@ def main() -> None:
             src_label=str(mining_shutdown_price_src),
         )
         print(f"[mining-shutdown-price] {'mining-shutdown-price':<45} {tag}")
+        total_copied += copied
+        total_skipped += skipped
+        total_bytes += bytes_c
+        total_removed += removed
+
+    if copy_tradfi:
+        # 独立目录：只镜像 tradfi-price，mirror-delete 仅作用于 dst/tradfi-price，不影响 coinglass
+        tradfi_dst = dest_root / "tradfi-price"
+        copied, skipped, bytes_c, removed = sync_json_dir(
+            tradfi_price_src, tradfi_dst, args.force, args.dry_run
+        )
+        tag = format_sync_tag(
+            copied,
+            skipped,
+            bytes_c,
+            removed,
+            total=copied + skipped,
+            src_exists=tradfi_price_src.is_dir(),
+            src_label=str(tradfi_price_src),
+        )
+        print(f"[tradfi]     {'tradfi-price':<45} {tag}")
         total_copied += copied
         total_skipped += skipped
         total_bytes += bytes_c

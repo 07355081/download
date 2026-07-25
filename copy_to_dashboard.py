@@ -53,6 +53,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import time
@@ -129,6 +130,27 @@ def fmt_size(n: int) -> str:
     return f"{n} B"
 
 
+def atomic_copy(src: Path, dst: Path) -> None:
+    """Copy src onto dst without ever exposing a partially written file.
+
+    The dashboard serves this tree live, so an in-place copy leaves a window in
+    which Next.js can JSON.parse a truncated file. Write a sibling temp first and
+    rename; rename is atomic within a filesystem.
+    """
+    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.tmp")
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def sweep_stale_temps(dst_dir: Path) -> None:
+    """Drop temp files left behind by a hard-killed run."""
+    for leftover in dst_dir.glob(".*.tmp"):
+        leftover.unlink(missing_ok=True)
+
+
 def sync_json_dir(src_dir: Path, dst_dir: Path, force: bool, dry_run: bool) -> tuple[int, int, int, int]:
     """Mirror flat *.json: copy from src_dir, delete dst extras. Returns (copied, skipped, bytes, removed)."""
     if not src_dir.is_dir():
@@ -149,11 +171,13 @@ def sync_json_dir(src_dir: Path, dst_dir: Path, force: bool, dry_run: bool) -> t
             copied += 1
             bytes_copied += src_size
             continue
-        shutil.copy2(src, dst)
+        atomic_copy(src, dst)
         copied += 1
         bytes_copied += src_size
 
     if dst_dir.is_dir():
+        if not dry_run:
+            sweep_stale_temps(dst_dir)
         for dst in dst_dir.glob("*.json"):
             if dst.name not in src_files:
                 removed += 1
@@ -194,11 +218,13 @@ def sync_named_json_files(
             copied += 1
             bytes_copied += src_size
             continue
-        shutil.copy2(src, dst)
+        atomic_copy(src, dst)
         copied += 1
         bytes_copied += src_size
 
     if dst_dir.is_dir():
+        if not dry_run:
+            sweep_stale_temps(dst_dir)
         for dst in dst_dir.glob("*.json"):
             if dst.name not in present:
                 removed += 1

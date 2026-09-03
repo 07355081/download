@@ -1,0 +1,7 @@
+# 本地维护的主库与中间缓存，不入库
+cache/
+output/csv/
+__pycache__/
+*.pyc
+.venv/
+venv/

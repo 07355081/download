@@ -1,0 +1,11 @@
+June 2026 Exchange Data Report: spot volume decreased 5.1%, derivatives volume increased 4.2%, website traffic decreased 0.82%
+
+Statistics compiled by the Wu Blockchain team show:
+
+In June 2026, spot trading volume across major exchanges decreased approximately 5.1% compared with May 2026. The top three performers were Bitfinex +21.4%, MEXC +2.7%, OKX +2.1%. The three largest declines were BitMart -58.6%, Upbit -31.1%, KuCoin -15.3%.
+
+In June 2026, derivatives trading volume across major exchanges increased approximately 4.2% compared with May 2026. The top three gainers were Deribit +26.6%, Hyperliquid +24.4%, Kraken +11.3%. The three largest declines were HTX -42.4%, Gate -31.8%, Bybit -12.8%.
+
+In June 2026, website traffic across major exchanges decreased approximately 0.82% compared with May 2026. The top three performers were Deribit +165.1%, OKX +13.4%, Bitfinex +10.2%. The three largest declines were HTX -50.8%, Upbit -12.4%, Bybit -8.9%.
+
+Note: The data below may involve significant wash-trading or bot activity. All figures have been preprocessed, including outlier removal, calibration, and standardization. Spot and derivatives raw data are from CoinGecko; traffic data are from Similarweb.

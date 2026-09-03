@@ -1,0 +1,11 @@
+May 2026 Exchange Data Report: spot volume increased 0.1%, derivatives volume increased 1.1%, website traffic decreased 0.26%
+
+Statistics compiled by the Wu Blockchain team show:
+
+In May 2026, spot trading volume across major exchanges increased approximately 0.1% compared with April 2026. The top three performers were OKX +20.3%, Kraken +7.0%, Bitget +4.8%. The three largest declines were Upbit -15.8%, Uniswap -13.3%, KuCoin -10.4%.
+
+In May 2026, derivatives trading volume across major exchanges increased approximately 1.1% compared with April 2026. The top three gainers were Coinbase +19.0%, Kraken +9.9%, Crypto.com +9.6%. The three largest declines were BitMart -37.9%, KuCoin -18.9%, Gate -17.4%.
+
+In May 2026, website traffic across major exchanges decreased approximately 0.26% compared with April 2026. The top three performers were HTX +156.2%, Kraken +4.9%, Bybit +4.0%. The three largest declines were Deribit -20.4%, KuCoin -7.4%, Bitget -5.5%.
+
+Note: The data below may involve significant wash-trading or bot activity. All figures have been preprocessed, including outlier removal, calibration, and standardization. Spot and derivatives raw data are from CoinGecko; traffic data are from Similarweb.

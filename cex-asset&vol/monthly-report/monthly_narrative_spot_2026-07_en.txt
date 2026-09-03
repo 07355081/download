@@ -1,0 +1,10 @@
+July 2026 Exchange Spot Volume Report: total $429.0 billion, MoM decreased 21.7%
+Statistics compiled by the WuBlockchain team: https://data.wublockchain.xyz/dashboard/exchange_volume
+
+In July 2026, spot trading volume across major exchanges totaled about $429.0 billion, decreased approximately 21.7% from $547.9 billion in June 2026. The sample covers 14 exchanges, of which 0 rose and 14 fell month over month.
+
+By notional volume, the top three were Binance $196.5 billion (45.8% share), OKX $41.6 billion (9.7% share), Bybit $36.3 billion (8.5% share). On concentration, the largest venue held about 45.8%, while the top three combined for about 64.0%.
+
+The three strongest MoM performers were Uniswap $24.5 billion (-9.8%), Kraken $22.3 billion (-13.4%), Gate $13.0 billion (-15.9%); the three largest declines were Bitfinex $4.1 billion (-59.7%), Coinbase $30.3 billion (-26.4%), Bybit $36.3 billion (-24.5%).
+
+Note: The data may involve significant wash-trading or bot activity. Figures have been preprocessed, including outlier removal, calibration, and standardization.

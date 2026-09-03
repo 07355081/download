@@ -1,0 +1,12 @@
+July 2026 Exchange Derivatives Volume Report: total $3.03 trillion, MoM decreased 11.1%, futures/spot ratio 7.06x
+Statistics compiled by the WuBlockchain team: https://data.wublockchain.xyz/dashboard/exchange_volume
+
+In July 2026, derivatives trading volume across major exchanges totaled about $3.03 trillion, decreased approximately 11.1% from $3.40 trillion in June 2026. The sample covers 12 exchanges, of which 3 rose and 9 fell month over month.
+
+By notional volume, the top three were Binance $1.40 trillion (46.3% share), OKX $581.3 billion (19.2% share), Bybit $284.5 billion (9.4% share). On concentration, the largest venue held about 46.3%, while the top three combined for about 74.9%.
+
+The three strongest MoM performers were Bitget $171.1 billion (+23.5%), Gate $99.7 billion (+21.1%), KuCoin $16.7 billion (+7.3%); the three largest declines were Deribit $12.9 billion (-44.4%), HTX $16.2 billion (-25.7%), Hyperliquid $217.0 billion (-18.5%).
+
+The futures-to-spot volume ratio was 7.06x in July 2026, increased approximately 13.6% from 6.21x in June 2026.
+
+Note: The data may involve significant wash-trading or bot activity. Figures have been preprocessed, including outlier removal, calibration, and standardization.

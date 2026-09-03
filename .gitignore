@@ -1,0 +1,51 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.envrc
+
+# locks / logs / tmp
+*.log
+.pipeline.lock
+.*.lock
+_audit_tmp.sh
+.DS_Store
+Thumbs.db
+
+# downloaded / generated data — keep locally, never commit
+**/cache/
+**/output/
+*.csv
+*.tsv
+*.json
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.xlsx
+*.xls
+*.html
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.pdf
+*.zip
+*.7z
+*.rar
+*.gz
+*.sqlite
+*.db
+*.bak
+*.bak-*
+*.pptx
+*.ppt
+*.docx

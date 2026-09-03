@@ -1,0 +1,11 @@
+July 2026 Exchange Volume Report: spot $429B (decreased 21.7%), derivatives $3,027B (decreased 11.1%), futures/spot ratio 7.06x
+
+Statistics compiled by the Wu Blockchain team show:
+
+In July 2026, aggregate spot volume across major exchanges was about $429B, decreased approximately 21.7% from $548B in June 2026. The top three by volume were Binance $196B, OKX $41.6B, Bybit $36.3B. The top three MoM performers were Uniswap -9.8%, Kraken -13.4%, Gate -15.9%; the three largest declines were Bitfinex -59.7%, Coinbase -26.4%, Bybit -24.5%.
+
+In July 2026, aggregate derivatives volume across major exchanges was about $3,027B, decreased approximately 11.1% from $3,403B in June 2026. The top three by volume were Binance $1,402B, OKX $581B, Bybit $285B. The top three MoM gainers were Bitget +23.5%, Gate +21.1%, KuCoin +7.3%; the three largest declines were Deribit -44.4%, HTX -25.7%, Hyperliquid -18.5%.
+
+The futures-to-spot volume ratio was 7.06x in July 2026, versus 6.21x in June 2026, increased approximately 13.6% month over month.
+
+Note: The data below may involve significant wash-trading or bot activity. All figures have been preprocessed, including outlier removal, calibration, and standardization. Spot and derivatives raw data are from CoinGecko. Prior-month volumes are as previously published when available; the current month uses the closing vintage and is frozen on the website after publication. Figures are in US dollars.

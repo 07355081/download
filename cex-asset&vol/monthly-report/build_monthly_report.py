@@ -19,6 +19,7 @@ import os
 import re
 import shlex
 import subprocess
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -81,6 +82,44 @@ COUNTRY_ALIASES = {
     "Türkiye": "Turkey",
     "Hong Kong SAR China": "Hong Kong",
     "Hong Kong SAR": "Hong Kong",
+    "韩国": "Korea",
+    "印度": "India",
+    "土耳其": "Turkey",
+    "巴西": "Brazil",
+    "委内瑞拉": "Venezuela",
+    "日本": "Japan",
+    "美国": "USA",
+    "菲律宾": "Philippines",
+    "墨西哥": "Mexico",
+    "英国": "UK",
+    "德国": "Germany",
+    "法国": "France",
+    "加拿大": "Canada",
+    "澳大利亚": "Australia",
+    "新加坡": "Singapore",
+    "越南": "Vietnam",
+    "泰国": "Thailand",
+    "印尼": "Indonesia",
+    "印度尼西亚": "Indonesia",
+    "中国": "China",
+    "香港": "Hong Kong",
+    "台湾": "Taiwan",
+    "俄罗斯": "Russia",
+    "乌克兰": "Ukraine",
+    "阿根廷": "Argentina",
+    "哥伦比亚": "Colombia",
+    "西班牙": "Spain",
+    "意大利": "Italy",
+    "荷兰": "Netherlands",
+    "波兰": "Poland",
+    "尼日利亚": "Nigeria",
+    "南非": "South Africa",
+    "马来西亚": "Malaysia",
+    "巴基斯坦": "Pakistan",
+    "孟加拉国": "Bangladesh",
+    "阿联酋": "UAE",
+    "沙特阿拉伯": "Saudi Arabia",
+    "埃及": "Egypt",
 }
 
 MONTH_NAME_TO_NUM = {
@@ -249,23 +288,53 @@ def parse_visit_millions(raw: str) -> float:
 
 
 def normalize_country(name: str) -> str:
-    name = name.strip()
+    name = unicodedata.normalize("NFKC", name).strip()
     return COUNTRY_ALIASES.get(name, name)
+
+
+FOLDER_EXCHANGE = {
+    **PDF_EXCHANGE,
+    "crypto.com": "Crypto.com",
+    "gate": "Gate",
+    "hyperliquid": "Hyperliquid",
+    "mexc": "MEXC",
+    "uniswap": "Uniswap",
+}
+
+
+def resolve_traffic_exchange(path: Path) -> str:
+    stem = path.stem.lower()
+    if stem in FOLDER_EXCHANGE:
+        return FOLDER_EXCHANGE[stem]
+    folder = path.parent.name.strip().lower()
+    if folder in FOLDER_EXCHANGE:
+        return FOLDER_EXCHANGE[folder]
+    raise ValueError(f"unknown exchange pdf name: {path}")
 
 
 def parse_traffic_pdf(path: Path) -> dict:
     with pdfplumber.open(path) as doc:
-        cover = doc.pages[0].extract_text() or ""
-        overview = doc.pages[1].extract_text() or ""
-        geo = doc.pages[3].extract_text() if len(doc.pages) > 3 else ""
+        cover = unicodedata.normalize("NFKC", doc.pages[0].extract_text() or "")
+        overview = unicodedata.normalize("NFKC", doc.pages[1].extract_text() or "")
+        geo = (
+            unicodedata.normalize("NFKC", doc.pages[3].extract_text() or "")
+            if len(doc.pages) > 3
+            else ""
+        )
 
     month_match = re.search(MONTH_PATTERN, cover)
     if not month_match:
-        raise ValueError(f"month not found in {path.name}")
-    month_name, year = month_match.group(1), int(month_match.group(2))
-    month_num = MONTH_NAME_TO_NUM[month_name]
+        yyyymm = re.fullmatch(r"(\d{4})(\d{2})", path.stem)
+        if not yyyymm:
+            raise ValueError(f"month not found in {path.name}")
+        year, month_num = int(yyyymm.group(1)), int(yyyymm.group(2))
+    else:
+        month_name, year = month_match.group(1), int(month_match.group(2))
+        month_num = MONTH_NAME_TO_NUM[month_name]
 
-    visit_match = re.search(r"Monthly visits\s+([\d,.]+[KMB]?)", overview)
+    visit_match = re.search(
+        r"(?:Monthly visits|每月访问量)\s+([\d,.]+[KMB]?)", overview
+    )
     if not visit_match:
         raise ValueError(f"monthly visits not found in {path.name}")
     visits = round(parse_visit_millions(visit_match.group(1)), 2)
@@ -273,7 +342,11 @@ def parse_traffic_pdf(path: Path) -> dict:
     countries: list[tuple[str, float]] = []
     for line in geo.splitlines():
         line = line.strip()
-        if not line or line.startswith(("Geography", "Country")) or "SimilarWeb" in line:
+        if (
+            not line
+            or line.startswith(("Geography", "Country", "地理", "热门国家", "国家/地区"))
+            or "SimilarWeb" in line
+        ):
             continue
         m = re.match(r"^(.+?)\s+([\d.]+)%", line)
         if m:
@@ -283,13 +356,8 @@ def parse_traffic_pdf(path: Path) -> dict:
         if len(countries) >= 3:
             break
 
-    stem = path.stem.lower()
-    exchange = PDF_EXCHANGE.get(stem)
-    if exchange is None:
-        raise ValueError(f"unknown exchange pdf name: {path.name}")
-
     return {
-        "exchange": exchange,
+        "exchange": resolve_traffic_exchange(path),
         "year": year,
         "month": month_num,
         "visits_m": visits,
@@ -297,8 +365,41 @@ def parse_traffic_pdf(path: Path) -> dict:
     }
 
 
+def pdf_month_key(path: Path) -> tuple[int, int] | None:
+    yyyymm = re.fullmatch(r"(\d{4})(\d{2})", path.stem)
+    if yyyymm:
+        year, month = int(yyyymm.group(1)), int(yyyymm.group(2))
+        if 1 <= month <= 12:
+            return year, month
+    m = re.search(
+        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_(\d{4})$",
+        path.stem,
+        re.I,
+    )
+    if m:
+        return int(m.group(2)), MONTH_NAME_TO_NUM[m.group(1).title()]
+    return None
+
+
+def discover_traffic_pdfs() -> list[Path]:
+    root_pdfs = sorted(TRAFFIC_DIR.glob("*.pdf"))
+    nested = sorted(TRAFFIC_DIR.glob("*/*.pdf"))
+    dated = [(p, pdf_month_key(p)) for p in nested]
+    dated = [(p, key) for p, key in dated if key]
+    if dated:
+        latest = max(key for _, key in dated)
+        return [p for p, key in dated if key == latest]
+    if root_pdfs:
+        return root_pdfs
+    return nested
+
+
 def load_traffic_from_pdfs() -> tuple[pd.Timestamp, dict[str, dict]]:
-    records = [parse_traffic_pdf(p) for p in sorted(TRAFFIC_DIR.glob("*.pdf"))]
+    records = []
+    for path in discover_traffic_pdfs():
+        rec = parse_traffic_pdf(path)
+        if rec["exchange"] in TRAFFIC_EXCHANGES:
+            records.append(rec)
     if not records:
         raise FileNotFoundError(f"no PDFs in {TRAFFIC_DIR}")
 

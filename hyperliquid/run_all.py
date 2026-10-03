@@ -1,7 +1,7 @@
 """Run the Hyperliquid pipeline.
 
 两步,都直接写 JSON(无需 CSV 中间层):
-  download.py        ASXN 的 HIP-3 / HIP-4 系列 query(dune-client 只读缓存)
+  download.py        ASXN 的 HIP-3 / HIP-4 小表(缓存超过 36h 才自己执行);按币种走官方接口
   download_fees.py   实测手续费(DefiLlama)+ 成交量拆分与 HyperEVM DEX(_dune.py)
 
 第二步失败不影响第一步已写好的文件,所以两步分开报错、整体以非零码结束,交由

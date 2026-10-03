@@ -201,9 +201,27 @@ def concentration(rows: pd.DataFrame) -> tuple[float, float]:
     return top1, top3
 
 
-def breadth(rows: pd.DataFrame) -> tuple[int, int]:
+def breadth(rows: pd.DataFrame) -> tuple[int, int, int]:
     moms = rows["mom"].dropna()
-    return int((moms > 0).sum()), int((moms < 0).sum())
+    return int((moms > 0).sum()), int((moms < 0).sum()), int((moms == 0).sum())
+
+
+def sample_breadth_cn(n: int, up: int, down: int, flat: int) -> str:
+    bits = [f"环比上涨 {up} 家", f"下跌 {down} 家"]
+    if flat:
+        bits.append(f"持平 {flat} 家")
+    return f"样本覆盖 {n} 家交易所，其中{'、'.join(bits)}。"
+
+
+def sample_breadth_en(n: int, up: int, down: int, flat: int) -> str:
+    extra = ""
+    if flat:
+        verb = "was" if flat == 1 else "were"
+        extra = f" and {flat} {verb} unchanged"
+    return (
+        f"The sample covers {n} exchanges, of which {up} rose and {down} fell "
+        f"month over month{extra}."
+    )
 
 
 def build_spot_narrative(
@@ -221,7 +239,7 @@ def build_spot_narrative(
     prev = sheet_sum(spot, prev_col)
     mom = float(spot.loc[spot["Exchange"] == "SUM", "MoM %"].iloc[0])
     top1, top3 = concentration(rows)
-    up, down = breadth(rows)
+    up, down, flat = breadth(rows)
     n = len(rows)
 
     title_cn = (
@@ -234,11 +252,11 @@ def build_spot_narrative(
     )
     cn = [
         title_cn,
-        f"吴说团队进行的数据统计显示：{DASHBOARD_VOLUME_URL}",
+        f"吴说数据中心统计显示：{DASHBOARD_VOLUME_URL}",
         "",
         f"{cy} 年 {MONTH_CN[cm]}，主要交易所现货成交量合计约 {fmt_usd_cn(curr)}，"
         f"相较 {py} 年 {MONTH_CN[pm]}的 {fmt_usd_cn(prev)} {dir_cn(mom)}约 {fmt_pct(mom)}。"
-        f"样本覆盖 {n} 家交易所，其中环比上涨 {up} 家、下跌 {down} 家。",
+        f"{sample_breadth_cn(n, up, down, flat)}",
         "",
         f"按成交额排名，前三为 {rank_vol_cn(rows)}。"
         f"头部集中度方面，第一名占比约 {fmt_share(top1)}，前三合计占比约 {fmt_share(top3)}。",
@@ -255,7 +273,7 @@ def build_spot_narrative(
         f"In {MONTH_EN[cm]} {cy}, spot trading volume across major exchanges totaled about "
         f"{fmt_usd_en(curr)}, {dir_en(mom)} approximately {fmt_pct(mom)} "
         f"from {fmt_usd_en(prev)} in {MONTH_EN[pm]} {py}. "
-        f"The sample covers {n} exchanges, of which {up} rose and {down} fell month over month.",
+        f"{sample_breadth_en(n, up, down, flat)}",
         "",
         f"By notional volume, the top three were {rank_vol_en(rows)}. "
         f"On concentration, the largest venue held about {fmt_share(top1)}, "
@@ -285,7 +303,7 @@ def build_futures_narrative(
     prev = sheet_sum(futures, prev_col)
     mom = float(futures.loc[futures["Exchange"] == "SUM", "MoM %"].iloc[0])
     top1, top3 = concentration(rows)
-    up, down = breadth(rows)
+    up, down, flat = breadth(rows)
     n = len(rows)
     ratio_curr = futures_spot_ratio(spot, futures, curr_col)
     ratio_prev = futures_spot_ratio(spot, futures, prev_col)
@@ -320,11 +338,11 @@ def build_futures_narrative(
 
     cn = [
         title_cn,
-        f"吴说团队进行的数据统计显示：{DASHBOARD_VOLUME_URL}",
+        f"吴说数据中心统计显示：{DASHBOARD_VOLUME_URL}",
         "",
         f"{cy} 年 {MONTH_CN[cm]}，主要交易所衍生品成交量合计约 {fmt_usd_cn(curr)}，"
         f"相较 {py} 年 {MONTH_CN[pm]}的 {fmt_usd_cn(prev)} {dir_cn(mom)}约 {fmt_pct(mom)}。"
-        f"样本覆盖 {n} 家交易所，其中环比上涨 {up} 家、下跌 {down} 家。",
+        f"{sample_breadth_cn(n, up, down, flat)}",
         "",
         f"按成交额排名，前三为 {rank_vol_cn(rows)}。"
         f"头部集中度方面，第一名占比约 {fmt_share(top1)}，前三合计占比约 {fmt_share(top3)}。",
@@ -343,7 +361,7 @@ def build_futures_narrative(
         f"In {MONTH_EN[cm]} {cy}, derivatives trading volume across major exchanges "
         f"totaled about {fmt_usd_en(curr)}, {dir_en(mom)} approximately {fmt_pct(mom)} "
         f"from {fmt_usd_en(prev)} in {MONTH_EN[pm]} {py}. "
-        f"The sample covers {n} exchanges, of which {up} rose and {down} fell month over month.",
+        f"{sample_breadth_en(n, up, down, flat)}",
         "",
         f"By notional volume, the top three were {rank_vol_en(rows)}. "
         f"On concentration, the largest venue held about {fmt_share(top1)}, "
@@ -390,7 +408,7 @@ def build_traffic_narrative(
     prev = sheet_sum(traffic, prev_col)
     mom = float(traffic.loc[traffic["Exchange"] == "SUM", "MoM %"].iloc[0])
     top1, top3 = concentration(rows)
-    up, down = breadth(rows)
+    up, down, flat = breadth(rows)
     n = len(rows)
 
     def rank_vol_visits_cn(frame: pd.DataFrame, k: int = 3) -> str:
@@ -442,11 +460,11 @@ def build_traffic_narrative(
     cn = [
         title_cn,
         "",
-        f"吴说团队进行的数据统计显示：{DASHBOARD_TRAFFIC_URL}",
+        f"吴说数据中心统计显示：{DASHBOARD_TRAFFIC_URL}",
         "",
         f"{cy} 年 {MONTH_CN[cm]}，主要交易所网站浏览量合计约 {fmt_visits_cn(curr)}，"
         f"相较 {py} 年 {MONTH_CN[pm]}的 {fmt_visits_cn(prev)} {dir_cn(mom)}约 {fmt_pct(mom, digits=2)}。"
-        f"样本覆盖 {n} 家交易所，其中环比上涨 {up} 家、下跌 {down} 家。",
+        f"{sample_breadth_cn(n, up, down, flat)}",
         "",
         f"按浏览量排名，前三为 {rank_vol_visits_cn(rows)}。"
         f"头部集中度方面，第一名占比约 {fmt_share(top1)}，前三合计占比约 {fmt_share(top3)}。",
@@ -465,7 +483,7 @@ def build_traffic_narrative(
         f"In {MONTH_EN[cm]} {cy}, website traffic across major exchanges totaled about "
         f"{fmt_visits_en(curr)}, {dir_en(mom)} approximately {fmt_pct(mom, digits=2)} "
         f"from {fmt_visits_en(prev)} in {MONTH_EN[pm]} {py}. "
-        f"The sample covers {n} exchanges, of which {up} rose and {down} fell month over month.",
+        f"{sample_breadth_en(n, up, down, flat)}",
         "",
         f"By visits, the top three were {rank_vol_visits_en(rows)}. "
         f"Concentration: the largest venue held about {fmt_share(top1)}, "

@@ -13,10 +13,8 @@ Three outputs, deliberately kept as three files so each carries one source:
   浮动:高成交日反而更低。所以本脚本在写盘时就丢掉 trading_fees_proxy_usd 与
   total_fees_usd 两列,避免它们被下游误当成费用收入。hyperevm_fees_usd 是链上实测,保留。
 
-为什么走 _dune.py 而不是 hyperliquid/download.py 的 dune-client:
-  这两个 query 是公开查询但不属于本账号。dune-client 的 get_latest_result 只读缓存,
-  owner 一停调度就会静默冻结(uni-burn 曾因此连发六天同一份数据)。_dune.fetch_query
-  在缓存超过 --max-age-hours 时会自己触发一次执行。
+这两个 query 是公开查询但不属于本账号。只读缓存时，owner 一停调度就会静默冻结。
+  与 download.py 一样走 _dune.fetch_query，缓存超过 --max-age-hours 才自己触发一次执行。
 
 Usage:
   python download_fees.py                 # 缓存超过 20h 才触发执行
@@ -42,11 +40,13 @@ JSON_DIR = HERE / "output" / "json"
 sys.path.insert(0, str(ROOT_DIR))
 from _dune import (  # noqa: E402
     DuneApi,
+    DuneCreditsExhausted,
     add_common_args,
     build_payload,
     fetch_query,
     now_utc_iso,
     print_dry_run,
+    read_local_execution_id,
     resolve_api_key,
     write_json,
 )
@@ -142,9 +142,13 @@ def build_fees_payload() -> dict:
     }
 
 
-def build_volume_split_payload(api: DuneApi, args: argparse.Namespace) -> dict:
+def build_volume_split_payload(api: DuneApi, args: argparse.Namespace, dest: Path) -> dict | None:
     query_id, desc = DUNE_QUERIES["hl_volume_split"]
-    result = fetch_query(api, query_id, args)
+    result = fetch_query(
+        api, query_id, args, local_execution_id=read_local_execution_id(dest)
+    )
+    if result.unchanged:
+        return None
     payload = build_payload("hl_volume_split", query_id, desc, result)
 
     completed: list[dict] = []
@@ -168,9 +172,13 @@ def build_volume_split_payload(api: DuneApi, args: argparse.Namespace) -> dict:
     return payload
 
 
-def build_hyperevm_dex_payload(api: DuneApi, args: argparse.Namespace) -> dict:
+def build_hyperevm_dex_payload(api: DuneApi, args: argparse.Namespace, dest: Path) -> dict | None:
     query_id, desc = DUNE_QUERIES["hyperevm_dex"]
-    result = fetch_query(api, query_id, args)
+    result = fetch_query(
+        api, query_id, args, local_execution_id=read_local_execution_id(dest)
+    )
+    if result.unchanged:
+        return None
     payload = build_payload("hyperevm_dex", query_id, desc, result)
 
     rows = [{**row, "day": day_key(row.get("day"))} for row in result.rows]
@@ -183,7 +191,7 @@ def build_hyperevm_dex_payload(api: DuneApi, args: argparse.Namespace) -> dict:
 
 
 BUILDERS = {
-    "hl_fees_daily": lambda api, args: build_fees_payload(),
+    "hl_fees_daily": lambda api, args, dest: build_fees_payload(),
     "hl_volume_split": build_volume_split_payload,
     "hyperevm_dex": build_hyperevm_dex_payload,
 }
@@ -221,10 +229,22 @@ def main() -> None:
         started = time.time()
         try:
             print(f"  [{i}/{len(names)}] {name}")
-            payload = BUILDERS[name](api, args)
-            write_json(out_dir / f"{name}.json", payload)
+            dest = out_dir / f"{name}.json"
+            payload = BUILDERS[name](api, args, dest)
+            if payload is None:
+                print(f"    未改写 {dest.name} {time.time() - started:.1f}s")
+                ok += 1
+                continue
+            write_json(dest, payload)
             print(f"    rows={payload['row_count']:<6} {time.time() - started:.1f}s")
             ok += 1
+        except DuneCreditsExhausted as exc:
+            print(f"    FAILED: {exc}")
+            failed.append(name)
+            for skipped in names[i:]:
+                print(f"    SKIP {skipped}: 额度不足,不再执行")
+                failed.append(skipped)
+            break
         except Exception as exc:  # noqa: BLE001
             print(f"    FAILED: {exc}")
             failed.append(name)

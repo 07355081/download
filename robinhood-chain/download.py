@@ -8,12 +8,11 @@
   才由我们自己触发一次执行接管。这样既不白花 credits,也不会像 UNI Burn 那样在 owner
   不跑之后无声无息地一直发旧数据。
 
-关于 launchpad_activity(query 8024180):
-  它同时含 volume_usd / trades / wallets 三列,一份数据就覆盖了"代币日交易量"和"代币
-  活跃交易者"两个指标,不需要再拉 7979343(那是同一份数据的旧版本,2579 个键与本表完全
-  重叠)。但本表的 volume_usd 有个已知脏数据:launchpad `bullmarkets` 有 24 天的成交量
-  被错误定价放大到万亿美元级(单日峰值 8.7e13,而整条链一天的 DEX 成交量才 3.5e8)。
-  这里保持源数据原样落盘不做清洗,由前端聚合层按阈值剔除并在面板上标注,便于溯源。
+关于 launchpad_activity:
+  全历史 query 8024180 一次大约 315 credits,已禁止自动执行。
+  窄查询 8884658 只返回最近两个完整 UTC 日,但实测执行大约 517 credits
+  (依赖的子查询仍会重算)。因此单独把刷新间隔放到 72 小时,而不是退回全历史查询。
+  更早的日期按 day 合并留在本地文件里。volume_usd 的 bullmarkets 异常值仍由前端剔除。
 
 Outputs:
   output/json/<name>.json           结构见 _dune.build_payload
@@ -57,7 +56,7 @@ QUERIES: dict[str, tuple[int, str]] = {
         "Meme Launchpad 每日新发代币数(按 launchpad)",
     ),
     "launchpad_activity": (
-        8024180,
+        8884658,
         "Meme Launchpad 代币日成交量 / 交易笔数 / 活跃交易者(按 launchpad)",
     ),
     "rwa_aum": (
@@ -79,7 +78,15 @@ def main() -> None:
     add_common_args(parser, default_max_age_hours=48.0)
     args = parser.parse_args()
 
-    run_module("robinhood-chain", QUERIES, args, Path(args.out), ROOT_DIR)
+    run_module(
+        "robinhood-chain",
+        QUERIES,
+        args,
+        Path(args.out),
+        ROOT_DIR,
+        merge_on={"launchpad_activity": "day"},
+        max_age_overrides={"launchpad_activity": 72.0},
+    )
 
 
 if __name__ == "__main__":

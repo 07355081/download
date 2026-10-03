@@ -1,0 +1,8 @@
+August 2026 Exchange Spot Volume Report: total $510.4 billion, MoM increased 19.0%
+Statistics compiled by the WuBlockchain team: https://data.wublockchain.xyz/dashboard/exchange_volume
+
+In August 2026, spot trading volume across major exchanges totaled about $510.4 billion, increased approximately 19.0% from $429.0 billion in July 2026. The sample covers 14 exchanges, of which 13 rose and 1 fell month over month.
+
+By notional volume, the top three were Binance $243.1 billion (47.6% share), OKX $46.9 billion (9.2% share), Coinbase $40.9 billion (8.0% share). On concentration, the largest venue held about 47.6%, while the top three combined for about 64.8%.
+
+Note: The data may involve significant wash-trading or bot activity. Figures have been preprocessed, including outlier removal, calibration, and standardization.

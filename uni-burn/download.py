@@ -1,13 +1,7 @@
 """Download UNI Burn metrics from Dune Analytics into local JSON files.
 
-Data source: Dune query 8260046 (daily UNI burns by chain + USD + cumulative).
-
-刷新口径(2026-08 修正):
-  query 8260046 属于 Dune 用户 oasishub,不是本账号的查询,Dune 上没有任何调度会自动
-  重跑它 —— 只读 get_latest_result 会永远拿到"上一次有人手动跑"的缓存快照。线上面板
-  就这么卡在 2026-08-16,连发六天同一份 677 行数据。
-  现在改为:缓存超过 --max-age-hours 就自己触发一次执行(见 _dune.py)。一次约 40
-  credits / 30 秒,每天至多一次。
+窄查询只扫最近两个完整 UTC 日(见 query.sql)。全历史 query 8260046 一次大约 49 credits,
+已放进 _dune.AUTO_EXECUTE_BLOCKLIST,日常不会再跑。本地 JSON 里更早的日期按 day 保留。
 
 Outputs:
   output/json/daily_by_chain.json   结构见 _dune.build_payload
@@ -31,10 +25,12 @@ JSON_DIR = HERE / "output" / "json"
 sys.path.insert(0, str(ROOT_DIR))
 from _dune import add_common_args, run_module  # noqa: E402
 
-# name -> (query_id, 中文说明)。name 即输出文件名 <name>.json,前端也按此约定读取。
+# 2026-10-02 从 8260046 收窄。实测约 1.1 credits / 次,可以每天跑。
+NARROW_QUERY_ID = 8884655
+
 QUERIES: dict[str, tuple[int, str]] = {
     "daily_by_chain": (
-        8260046,
+        NARROW_QUERY_ID,
         "UNI 按链日度销毁量及美元、各链累积销毁",
     ),
 }
@@ -47,7 +43,14 @@ def main() -> None:
     add_common_args(parser, default_max_age_hours=20.0)
     args = parser.parse_args()
 
-    run_module("uni-burn", QUERIES, args, Path(args.out), ROOT_DIR)
+    run_module(
+        "uni-burn",
+        QUERIES,
+        args,
+        Path(args.out),
+        ROOT_DIR,
+        merge_on={"daily_by_chain": "day"},
+    )
 
 
 if __name__ == "__main__":

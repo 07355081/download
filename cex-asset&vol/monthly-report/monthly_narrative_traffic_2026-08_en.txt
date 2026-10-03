@@ -1,0 +1,11 @@
+August 2026 Exchange Website Traffic Report: total about 135.30 million visits, MoM increased 0.74%
+
+Statistics compiled by the WuBlockchain team: https://data.wublock123.com/dashboard/website_traffic
+
+In August 2026, website traffic across major exchanges totaled about 135.30 million visits, increased approximately 0.74% from 134.31 million visits in July 2026. The sample covers 12 exchanges, of which 5 rose and 6 fell month over month and 1 was unchanged.
+
+By visits, the top three were Binance 34.19 million visits (25.3% share), OKX 25.62 million visits (18.9% share), Coinbase 21.31 million visits (15.8% share). Concentration: the largest venue held about 25.3%, while the top three combined for about 60.0%.
+
+The three strongest MoM performers were Upbit 4.75 million visits (+14.2%), Bitget 9.76 million visits (+9.5%), KuCoin 16.85 million visits (+8.2%); the three largest declines were HTX 1.41 million visits (-14.0%), Deribit 0.58 million visits (-7.9%), Crypto.com 2.71 million visits (-6.2%).
+
+On geography, Binance's top visitor origin was Korea; OKX's top visitor origin was Japan; Coinbase's top visitor origin was USA.

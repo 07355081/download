@@ -9,8 +9,10 @@ API:
   GET stablecoincharts/{chain}              -> {chain}_stablecoins
   GET stablecoincharts/all                  -> all_stablecoins
   GET stablecoincharts/all?stablecoin={id}  -> all_{coin}
+  GET stablecoincharts/{chain}?stablecoin={id} -> {chain}_{coin}
 
-Does not fetch per-chain single-coin series (no {chain}_usdt columns).
+Per-chain single-coin series are fetched unless --skip-breakdown.
+Does not call GET /stablecoin/{id} (that payload includes every chain).
 
 Incremental merge (same as before):
   - CSV exists -> append dates after last checkpoint per column group
@@ -311,6 +313,41 @@ def fetch_global_usds_dai() -> dict[str, float]:
     return build_usds_dai_series(parts[0], parts[1])
 
 
+def cross_column(prefix: str, suffix: str) -> str:
+    return f"{prefix}_{suffix}"
+
+
+def fetch_chain_coin(chain: ChainSpec, coin: CoinSpec) -> dict[str, float]:
+    rows = fetch_chart(chain.api_slug, coin.defillama_id)
+    save_cache(f"{chain.api_slug}_{coin.column_suffix}", rows)
+    return normalize_pegged_usd_series(rows)
+
+
+def fetch_chain_usds_dai(chain: ChainSpec) -> dict[str, float]:
+    parts: list[dict[str, float]] = []
+    for suffix, defillama_id in USDS_DAI_PARTS:
+        rows = fetch_chart(chain.api_slug, defillama_id)
+        save_cache(f"{chain.api_slug}_{suffix}_for_usds_dai", rows)
+        parts.append(normalize_pegged_usd_series(rows))
+        time.sleep(CHAIN_SLEEP_SEC)
+    return build_usds_dai_series(parts[0], parts[1])
+
+
+def ingest_column(
+    by_time: dict[str, dict[str, Any]],
+    column: str,
+    series: dict[str, float],
+    *,
+    full: bool,
+) -> int:
+    if not series:
+        return 0
+    has_history = column_has_history(by_time, column)
+    last_date = None if full or not has_history else last_date_for_column(by_time, column)
+    filtered = filter_after(series, last_date)
+    return merge_series_into_column(by_time, column, filtered)
+
+
 def column_order(existing_fields: list[str], by_time: dict[str, dict[str, Any]]) -> list[str]:
     discovered = sorted({key for row in by_time.values() for key in row if key != "time"})
     ordered = ["time"]
@@ -366,6 +403,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force re-download entire history for selected chains/coins.",
     )
+    parser.add_argument(
+        "--skip-breakdown",
+        action="store_true",
+        help="Skip per-chain single-coin columns ({chain}_{coin}).",
+    )
     return parser.parse_args()
 
 
@@ -383,6 +425,7 @@ def main() -> None:
     total_updates = 0
     failed_chains: list[str] = []
     failed_coins: list[str] = []
+    failed_breakdown: list[str] = []
 
     if not args.skip_chains:
         selected_chains = [c for c in CHAINS if not only_chains or c.column_prefix in only_chains]
@@ -472,10 +515,51 @@ def main() -> None:
                 total_updates += updated
                 print(f"all_usds/dai: merged {updated} day(s), +{len(filtered)} fetched day(s)")
 
+    if not args.skip_breakdown:
+        breakdown_chains = [c for c in CHAINS if not only_chains or c.column_prefix in only_chains]
+        if only_chains and not breakdown_chains:
+            raise SystemExit("No chains selected.")
+        breakdown_coins = [
+            c for c in GLOBAL_COINS if not only_coins or c.column_suffix in only_coins
+        ]
+        want_cross_usds_dai = not only_coins or "usds/dai" in only_coins or "usds&dai" in only_coins
+        series_per_chain = len(breakdown_coins) + (1 if want_cross_usds_dai else 0)
+        print(
+            f"breakdown: {len(breakdown_chains)} chain(s) x {series_per_chain} coin series"
+        )
+        for chain in breakdown_chains:
+            for coin in breakdown_coins:
+                col = cross_column(chain.column_prefix, coin.column_suffix)
+                try:
+                    series = fetch_chain_coin(chain, coin)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"{col}: [skip] fetch failed: {exc}")
+                    failed_breakdown.append(col)
+                    time.sleep(CHAIN_SLEEP_SEC)
+                    continue
+                updated = ingest_column(by_time, col, series, full=args.full)
+                total_updates += updated
+                print(f"{col}: merged {updated} day(s)")
+                time.sleep(CHAIN_SLEEP_SEC)
+
+            if want_cross_usds_dai:
+                col = cross_column(chain.column_prefix, "usds/dai")
+                try:
+                    series = fetch_chain_usds_dai(chain)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"{col}: [skip] fetch failed: {exc}")
+                    failed_breakdown.append(col)
+                    continue
+                updated = ingest_column(by_time, col, series, full=args.full)
+                total_updates += updated
+                print(f"{col}: merged {updated} day(s)")
+
     if failed_chains:
         print(f"[warn] {len(failed_chains)} chain(s) skipped: {failed_chains}")
     if failed_coins:
         print(f"[warn] {len(failed_coins)} coin(s) skipped: {failed_coins}")
+    if failed_breakdown:
+        print(f"[warn] {len(failed_breakdown)} breakdown series skipped: {failed_breakdown}")
 
     if not by_time:
         raise SystemExit("No rows to write (all fetches failed?).")

@@ -13,6 +13,7 @@
 #           mining-shutdown-price BTC 链指标走 mempool.space(全量重拉,体量小);
 #           cex-asset&vol vol-mode=append(补 major_vol 空洞)+DefiLlama 资产/BTC 增量。
 # 日志:_misc_daily.log。由 root crontab 每日 05:00 调用(coinglass 01:00 / tradfi 06:30,共用全局锁串行)。
+# 等锁要盖住 coinglass 的实际耗时(近期 5.5~6.3 小时)。2 小时死线会在 coinglass 跑过 07:00 时把整条 misc 静默跳过。
 set -o pipefail
 cd /root/data-download || exit 1
 
@@ -22,7 +23,7 @@ ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
 # 全局串行锁:三个每日管道共用同一把锁, 保证同一时刻只有一个重活在动盘。
 exec 9>/root/data-download/.pipeline.lock
-flock -w 7200 9 || { echo "[$(ts)] 等锁超时(另一个管道仍在跑),跳过本次" >> "$LOG"; exit 0; }
+flock -w 21600 9 || { echo "[$(ts)] 等锁超时(另一个管道仍在跑),跳过本次" >> "$LOG"; exit 0; }
 
 # 高水位预检:磁盘将满 / outbox 未被本机拉走则本轮直接跳过
 if ! $VENV _watermark.py --outbox /root/outbox >> "$LOG" 2>&1; then
@@ -46,6 +47,10 @@ fi
 
   echo "[$(ts)] 4/10 stablecoin(DefiLlama 增量)..."
   $VENV stablecoin/run_all.py || echo "[$(ts)]   [WARN] stablecoin 失败,继续"
+
+  # 必须排在 stablecoin 之后:SSR 的分母就是上一步产出的稳定币总市值。
+  echo "[$(ts)] btc-index 派生指标(MVRV Z / SSR,免费源重建)..."
+  $VENV btc-index/download_derived.py || echo "[$(ts)]   [WARN] download_derived 失败,继续"
 
   echo "[$(ts)] 5/10 hyperliquid(Dune get_latest_result,读缓存结果不重跑)..."
   $VENV hyperliquid/run_all.py || echo "[$(ts)]   [WARN] hyperliquid 失败,继续"

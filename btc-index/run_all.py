@@ -78,6 +78,10 @@ def main() -> None:
             convert_cmd.append("--skip-glassnode")
         run_step(convert_cmd, "CSV -> JSON (coinglass + glassnode)")
 
+    # MVRV / SSR 不再走 Glassnode。SSR 的分母是 stablecoin 管道的 JSON；
+    # 日更里 misc 会在 stablecoin 刷新之后再跑一遍，这里保证单独跑 btc-index 也会落盘。
+    run_step([py, str(BASE_DIR / "download_derived.py")], "Derived: MVRV Z-Score + SSR")
+
     print("\nDONE. outputs:", flush=True)
     print("  output/csv/coinglass/", flush=True)
     print("  output/csv/glassnode/", flush=True)

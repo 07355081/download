@@ -6,6 +6,7 @@ Each per-endpoint subfolder imports from here. Keep this stable; bump
 from __future__ import annotations
 
 import csv
+import importlib.util
 import json
 import os
 import sys
@@ -22,10 +23,15 @@ from urllib import error, parse, request
 API_BASE = "https://open-api-v4.coinglass.com"
 USER_AGENT = "coinglass-history-downloader/1.0"
 
-# 14 main exchanges from dashboard's TRACKED_EXCHANGES
+# Hard-coded API key (lowest priority; can be overridden by --api-key / env / .env)
+COINGLASS_API_KEY = "377718ae2a9747c197167237a0821cca"
+
+# 15 main exchanges from dashboard's TRACKED_EXCHANGES (Hyperliquid crypto → Coinglass;
+# TradFi/HIP-3 → tradfi/ Hyperliquid adapter 直连)
 TRACKED_EXCHANGES: tuple[str, ...] = (
     "Binance", "Gate", "Coinbase", "Bybit", "OKX", "Bitget", "MEXC",
     "Crypto.com", "Kucoin", "HTX", "Kraken", "Bitfinex", "Upbit", "Deribit",
+    "Hyperliquid",
 )
 
 # Intervals: dashboard only uses these 5; we localize the 3 lower-frequency ones.
@@ -78,6 +84,73 @@ def module_dir(module_file: str) -> Path:
     return Path(module_file).resolve().parent
 
 
+# ─────────────────────────── TradFi exclusion (coinglass 停 tradfi) ───────────────────────────
+#
+# TradFi 标的（Stocks / Commodities / Indices）已完全从 coinglass 下线，改由交易所直连独占。
+# 这里复用 tradfi/_common.py 的 classify_sector 逻辑，把这些 base_asset 从 coinglass
+# 逐标的下载中排除。用 importlib 按独立模块名加载，避免与本包同名的 _common 冲突。
+
+_TRADFI_CLASSIFY: Callable[..., str | None] | None = None
+_TRADFI_LOADED = False
+
+
+def _load_tradfi_classifier() -> Callable[..., str | None] | None:
+    """Load tradfi/_common.classify_sector (with tag Stocks set primed). Cached; None if unavailable."""
+    global _TRADFI_CLASSIFY, _TRADFI_LOADED
+    if _TRADFI_LOADED:
+        return _TRADFI_CLASSIFY
+    _TRADFI_LOADED = True
+    try:
+        tf_path = ROOT_DIR.parent / "tradfi" / "_common.py"
+        if not tf_path.is_file():
+            return None
+        spec = importlib.util.spec_from_file_location("tradfi_common_for_coinglass", tf_path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        # dataclass 处理需模块已在 sys.modules（Py3.12+ 严格）
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        # 加载 tag 判定的 Stocks 集合，否则个股（TSLA/NVDA…）无法识别
+        mod.load_tag_stocks()
+        _TRADFI_CLASSIFY = mod.classify_sector
+    except Exception:
+        _TRADFI_CLASSIFY = None
+    return _TRADFI_CLASSIFY
+
+
+def is_tradfi_base(base_asset: str) -> bool:
+    """True 当 base_asset 判为 Stocks / Commodities / Indices（tradfi），应从 coinglass 排除。"""
+    fn = _load_tradfi_classifier()
+    if fn is None or not base_asset:
+        return False
+    try:
+        return fn(base_asset) is not None
+    except Exception:
+        return False
+
+
+def extract_base_from_instrument(instrument_id: str) -> str:
+    """从交易对 id 粗提 base_asset（供缺少 base_asset 元数据的存量文件兜底分类）。"""
+    s = (instrument_id or "").strip().upper()
+    if not s:
+        return ""
+    if s.startswith("PF_"):  # Kraken 永续
+        s = s[3:]
+    # 取第一个分隔符前的主段（OKX BTC-USDT-SWAP / Crypto.com BTCUSD-PERP 等）
+    for sep in ("-", "_"):
+        if sep in s:
+            head = s.split(sep, 1)[0]
+            if head:
+                s = head
+                break
+    for suf in ("USDT", "USDC", "BUSD", "FDUSD", "USD", "PERP", "SWAP"):
+        if s.endswith(suf) and len(s) > len(suf):
+            s = s[: -len(suf)]
+            break
+    return s
+
+
 # ─────────────────────────── Env / API key ───────────────────────────
 
 def load_env(p: Path) -> None:
@@ -95,8 +168,7 @@ def resolve_api_key(arg_key: str | None = None) -> str:
     if arg_key:
         return arg_key
     load_env(ROOT_DIR / ".env")
-    load_env(ROOT_DIR.parent / ".env")
-    key = (os.environ.get("COINGLASS_API_KEY") or "").strip()
+    key = os.environ.get("COINGLASS_API_KEY") or COINGLASS_API_KEY
     if not key:
         sys.exit("ERROR: COINGLASS_API_KEY not provided.")
     return key

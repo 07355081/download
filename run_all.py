@@ -1,8 +1,8 @@
 """Run every subfolder run_all.py in data-download (root orchestrator).
 
-Modules (8):
+Modules (7):
   coinglass-history, btc-index, cex-asset&vol, crypto-treasuries,
-  mining-shutdown-price, options, stablecoin, financing-news
+  mining-shutdown-price, options, stablecoin
 
 Usage:
     python run_all.py
@@ -29,7 +29,6 @@ MODULE_ORDER: tuple[str, ...] = (
     "mining-shutdown-price",
     "options",
     "stablecoin",
-    "financing-news",
 )
 
 

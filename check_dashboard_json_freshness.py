@@ -383,7 +383,13 @@ def main() -> None:
     if not root.is_dir():
         raise SystemExit(f"JSON root not found: {root}")
 
-    files = sorted(root.rglob("*.json"))
+    # 跳过 gen_dashboard_meta.py 产出的 _indexes/ 与 _manifest.json：
+    # 它们是目录索引和数据契约，不是数据集，混进新鲜度报表只会制造噪音。
+    files = sorted(
+        p
+        for p in root.rglob("*.json")
+        if not p.name.startswith("_") and "_indexes" not in p.relative_to(root).parts
+    )
     print(f"Scanning {len(files)} JSON files under {root}", flush=True)
 
     rows: list[dict[str, Any]] = []

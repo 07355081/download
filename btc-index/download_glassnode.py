@@ -37,6 +37,8 @@ DEFAULT_STATUS = SCRIPT_DIR / "output" / "csv" / "glassnode" / "_run_status.csv"
 DAY_S = 24 * 60 * 60
 GLASS_CACHE_HEADER = ["time_unix", "time_utc", "value"]
 
+# Hard-coded key (lowest priority; env / .env / --api-key override)
+API_KEY = "myapi_sk_671c771c1c4aa3a1925655f7641d0a8b"
 DEFAULT_RECHECK_DAYS = 2
 DEFAULT_MAX_REQUESTS = 100
 # Alphanode quota: these HTTP statuses do not consume a billable download.
@@ -93,10 +95,9 @@ def resolve_api_key(arg_key: str | None) -> str:
     if arg_key:
         return arg_key
     load_env(SCRIPT_DIR / ".env")
-    load_env(SCRIPT_DIR.parent / ".env")
-    key = (os.environ.get("ALPHANODE_API_KEY") or "").strip()
+    key = os.environ.get("ALPHANODE_API_KEY") or API_KEY
     if not key:
-        sys.exit("ERROR: ALPHANODE_API_KEY not provided (use --api-key, env, or .env).")
+        sys.exit("ERROR: ALPHANODE_API_KEY not provided (use --api-key, env, .env, or hard-code).")
     return key
 
 

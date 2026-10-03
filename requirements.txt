@@ -1,3 +1,13 @@
 requests>=2.28.0
 pandas>=2.0.0
+numpy>=1.24.0
 beautifulsoup4>=4.12.0
+# cex-asset&vol 读写 .xlsx 中间产物时需要（pandas read_excel/to_excel 引擎）
+openpyxl>=3.1.0
+# 派生 parquet / DuckDB 量化层
+pyarrow>=14.0.0
+duckdb>=0.10.0
+# tradfi 下载走 ssh -D 建立的 SOCKS 代理时需要（ALL_PROXY=socks5h://127.0.0.1:1080）
+PySocks>=1.7.1
+# hyperliquid 模块从 Dune Analytics 读取查询结果（get_latest_result）
+dune-client>=1.7.0

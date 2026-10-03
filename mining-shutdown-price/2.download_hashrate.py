@@ -2,12 +2,14 @@
 
 Next: 3.compute_shutdown.py → 4.csv_to_json.py.
 
-BitInfoCharts (multi-coin hashrate, BTC chain metrics) and 2Miners altcoin hashrate.
+BTC chain metrics (hashrate / fee-in-reward / blocks-per-day): mempool.space REST
+(primary; VPS-friendly). BitInfoCharts multi-coin hashrate is best-effort only
+(Cloudflare often 403s datacenter IPs). 2Miners covers altcoin hashrate.
 
 Outputs:
-  - output/json/bitinfocharts_hashrate_history.json
+  - output/json/bitinfocharts_hashrate_history.json   (optional multi-coin)
   - output/csv/bitinfocharts_hashrate_history.csv
-  - output/csv/bitinfocharts_btc_hashrate_hs.csv
+  - output/csv/bitinfocharts_btc_hashrate_hs.csv      (from mempool; filename kept)
   - output/csv/bitinfocharts_btc_fee_in_reward_pct.csv
   - output/csv/bitinfocharts_btc_blocks_per_day.csv
   - output/json/bitinfocharts_btc_main_snapshot.json
@@ -49,6 +51,13 @@ BITINFO_BTC_FEE_IN_REWARD_CSV = CSV_DIR / "bitinfocharts_btc_fee_in_reward_pct.c
 BITINFO_BTC_BLOCKS_PER_DAY_CSV = CSV_DIR / "bitinfocharts_btc_blocks_per_day.csv"
 BITINFO_BTC_MAIN_SNAPSHOT_JSON = JSON_DIR / "bitinfocharts_btc_main_snapshot.json"
 BITINFO_CSV_FIELDS = ["date", *BITINFO_COINS]
+
+# mempool.space — VPS-reachable replacement for BitInfoCharts BTC charts
+MEMPOOL_HASHRATE_URL = "https://mempool.space/api/v1/mining/hashrate/all"
+MEMPOOL_REWARDS_URL = "https://mempool.space/api/v1/mining/blocks/rewards/all"
+MEMPOOL_FEES_URL = "https://mempool.space/api/v1/mining/blocks/fees/all"
+BLOCKCHAIN_STATS_URL = "https://api.blockchain.info/stats"
+DEFAULT_BLOCKS_PER_DAY = 144.0
 
 # 2Miners config
 SUPPORTED_2MINERS_COINS = ["bch", "etc", "kas", "ckb", "zec"]
@@ -164,7 +173,16 @@ def parse_args() -> argparse.Namespace:
         default=",".join(SUPPORTED_2MINERS_COINS),
         help="Comma-separated 2Miners coins to update (subset of bch,etc,kas,ckb,zec).",
     )
-    parser.add_argument("--skip-bitinfocharts", action="store_true", help="Skip BitInfoCharts update")
+    parser.add_argument(
+        "--skip-btc-chain",
+        action="store_true",
+        help="Skip mempool.space BTC chain metrics (hashrate/fee/blocks)",
+    )
+    parser.add_argument(
+        "--skip-bitinfocharts",
+        action="store_true",
+        help="Skip BitInfoCharts multi-coin hashrate scrape (often blocked on VPS)",
+    )
     parser.add_argument("--skip-2miners", action="store_true", help="Skip 2Miners update")
     return parser.parse_args()
 
@@ -270,30 +288,130 @@ def bitinfo_save_csv(records: Iterable[dict[str, float | None]]) -> None:
             writer.writerow({field: record.get(field) for field in BITINFO_CSV_FIELDS})
 
 
+def _mempool_get_json(url: str, *, timeout: int = 120) -> Any:
+    response = requests.get(url, headers=BITINFO_HEADERS, timeout=timeout)
+    response.raise_for_status()
+    return response.json()
+
+
+def _utc_date_from_ts(ts: int | float) -> datetime.date:
+    return datetime.datetime.fromtimestamp(int(ts), tz=datetime.timezone.utc).date()
+
+
+def _fee_in_reward_pct(avg_fees: float, avg_rewards: float) -> float | None:
+    if avg_rewards <= 0:
+        return None
+    pct = 100.0 * float(avg_fees) / float(avg_rewards)
+    if pct < 0 or pct >= 100:
+        return None
+    return pct
+
+
+def _align_mempool_series(
+    rewards: list[dict[str, Any]],
+    fees: list[dict[str, Any]],
+) -> list[tuple[datetime.date, float, float]]:
+    """Join rewards+fees by timestamp → (date, fee_in_reward_pct, blocks_per_day)."""
+    fee_by_ts = {int(item["timestamp"]): item for item in fees if item.get("timestamp") is not None}
+    rewards_sorted = sorted(
+        (item for item in rewards if item.get("timestamp") is not None),
+        key=lambda item: int(item["timestamp"]),
+    )
+    out: list[tuple[datetime.date, float, float]] = []
+    prev_ts: int | None = None
+    prev_height: float | None = None
+    for item in rewards_sorted:
+        ts = int(item["timestamp"])
+        fee_item = fee_by_ts.get(ts)
+        if fee_item is None:
+            continue
+        try:
+            avg_rewards = float(item["avgRewards"])
+            avg_fees = float(fee_item["avgFees"])
+            avg_height = float(item["avgHeight"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        fee_pct = _fee_in_reward_pct(avg_fees, avg_rewards)
+        if fee_pct is None:
+            continue
+        if prev_ts is None or prev_height is None:
+            blocks = DEFAULT_BLOCKS_PER_DAY
+        else:
+            dt_days = (ts - prev_ts) / 86400.0
+            height_delta = avg_height - prev_height
+            if dt_days > 0 and height_delta > 0:
+                blocks = height_delta / dt_days
+            else:
+                blocks = DEFAULT_BLOCKS_PER_DAY
+        out.append((_utc_date_from_ts(ts), fee_pct, blocks))
+        prev_ts = ts
+        prev_height = avg_height
+    return out
+
+
 def update_btc_chain_metrics() -> None:
-    """BTC hashrate (H/s), fee-in-reward (%), blocks/day for compute_shutdown."""
-    hashrate_rows = fetch_chart_series("hashrate")
+    """BTC hashrate (H/s), fee-in-reward (%), blocks/day via mempool.space (+ blockchain.info snapshot)."""
+    hashrate_payload = _mempool_get_json(MEMPOOL_HASHRATE_URL)
+    hashrate_points = hashrate_payload.get("hashrates") if isinstance(hashrate_payload, dict) else None
+    if not isinstance(hashrate_points, list) or not hashrate_points:
+        raise RuntimeError("mempool hashrate payload missing hashrates[]")
+
+    hashrate_rows: list[tuple[datetime.date, float]] = []
+    for point in hashrate_points:
+        try:
+            ts = int(point["timestamp"])
+            avg_hs = float(point["avgHashrate"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if avg_hs <= 0:
+            continue
+        hashrate_rows.append((_utc_date_from_ts(ts), avg_hs))
+    hashrate_rows.sort(key=lambda item: item[0])
+    # One row per date (keep last if duplicates)
+    hashrate_by_day = {day: value for day, value in hashrate_rows}
+    hashrate_rows = sorted(hashrate_by_day.items(), key=lambda item: item[0])
     write_date_value_csv(BITINFO_BTC_HASHRATE_HS_CSV, "hashrate_hs", hashrate_rows)
-    print(f"[bitinfocharts] btc hashrate rows={len(hashrate_rows)} -> {BITINFO_BTC_HASHRATE_HS_CSV.name}")
+    print(f"[mempool] btc hashrate rows={len(hashrate_rows)} -> {BITINFO_BTC_HASHRATE_HS_CSV.name}")
 
-    fee_rows = fetch_chart_series("fee_to_reward")
+    rewards = _mempool_get_json(MEMPOOL_REWARDS_URL)
+    fees = _mempool_get_json(MEMPOOL_FEES_URL)
+    if not isinstance(rewards, list) or not isinstance(fees, list):
+        raise RuntimeError("mempool rewards/fees payload must be list")
+    aligned = _align_mempool_series(rewards, fees)
+    fee_rows = [(day, fee_pct) for day, fee_pct, _blocks in aligned]
+    block_rows = [(day, blocks) for day, _fee_pct, blocks in aligned]
     write_date_value_csv(BITINFO_BTC_FEE_IN_REWARD_CSV, "fee_in_reward_pct", fee_rows)
-    print(f"[bitinfocharts] fee in reward rows={len(fee_rows)} -> {BITINFO_BTC_FEE_IN_REWARD_CSV.name}")
-
-    block_time_rows = fetch_chart_series("confirmationtime")
-    block_rows: list[tuple[datetime.date, float]] = []
-    for day, block_time_min in block_time_rows:
-        blocks = blocks_per_day_from_block_time_minutes(block_time_min)
-        if blocks is not None:
-            block_rows.append((day, blocks))
+    print(f"[mempool] fee in reward rows={len(fee_rows)} -> {BITINFO_BTC_FEE_IN_REWARD_CSV.name}")
     write_date_value_csv(BITINFO_BTC_BLOCKS_PER_DAY_CSV, "blocks_per_day", block_rows)
-    print(f"[bitinfocharts] blocks/day rows={len(block_rows)} -> {BITINFO_BTC_BLOCKS_PER_DAY_CSV.name}")
+    print(f"[mempool] blocks/day rows={len(block_rows)} -> {BITINFO_BTC_BLOCKS_PER_DAY_CSV.name}")
 
-    snapshot = fetch_bitcoin_main_snapshot()
+    latest_fee = fee_rows[-1][1] if fee_rows else None
+    latest_blocks = block_rows[-1][1] if block_rows else DEFAULT_BLOCKS_PER_DAY
+    blocks_last_24h = latest_blocks
+    try:
+        stats = _mempool_get_json(BLOCKCHAIN_STATS_URL, timeout=30)
+        if isinstance(stats, dict) and isinstance(stats.get("n_blocks_mined"), (int, float)):
+            blocks_last_24h = float(stats["n_blocks_mined"])
+    except Exception as exc:
+        print(f"[mempool] blockchain.info stats unavailable ({exc}); using latest series blocks/day")
+
+    if latest_fee is None:
+        raise RuntimeError("no fee_in_reward series to build snapshot")
+
+    snapshot = {
+        "blocks_last_24h": blocks_last_24h,
+        "fee_in_reward_pct": latest_fee,
+    }
     BITINFO_BTC_MAIN_SNAPSHOT_JSON.write_text(
         json.dumps(
             {
-                "source": BITINFO_BTC_URL,
+                "source": MEMPOOL_HASHRATE_URL,
+                "sources": {
+                    "hashrate": MEMPOOL_HASHRATE_URL,
+                    "rewards": MEMPOOL_REWARDS_URL,
+                    "fees": MEMPOOL_FEES_URL,
+                    "stats": BLOCKCHAIN_STATS_URL,
+                },
                 "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 **snapshot,
             },
@@ -303,12 +421,13 @@ def update_btc_chain_metrics() -> None:
         encoding="utf-8",
     )
     print(
-        f"[bitinfocharts] main snapshot blocks_last_24h={snapshot['blocks_last_24h']} "
-        f"fee_in_reward_pct={snapshot['fee_in_reward_pct']}"
+        f"[mempool] main snapshot blocks_last_24h={snapshot['blocks_last_24h']} "
+        f"fee_in_reward_pct={snapshot['fee_in_reward_pct']:.4f}"
     )
 
 
-def update_bitinfocharts() -> None:
+def update_bitinfocharts_multicoin() -> None:
+    """Best-effort multi-coin hashrate scrape (not required for dashboard shutdown price)."""
     url = bitinfo_comparison_url()
     html = fetch_page(url, timeout=30)
     rows = extract_dygraph_rows(html)
@@ -321,7 +440,11 @@ def update_bitinfocharts() -> None:
         print(f"[bitinfocharts] appended {new_count} new records")
     else:
         print(f"[bitinfocharts] initialized with {len(records)} records")
-    update_btc_chain_metrics()
+
+
+def update_bitinfocharts() -> None:
+    """Backward-compatible name: multi-coin scrape only (BTC metrics moved to mempool)."""
+    update_bitinfocharts_multicoin()
 
 
 # --- 2Miners ---
@@ -424,8 +547,14 @@ def main() -> None:
     args = parse_args()
     ensure_output_dirs()
 
+    if not args.skip_btc_chain:
+        update_btc_chain_metrics()
+
     if not args.skip_bitinfocharts:
-        update_bitinfocharts()
+        try:
+            update_bitinfocharts_multicoin()
+        except Exception as exc:
+            print(f"[bitinfocharts] multi-coin scrape skipped: {exc}")
 
     if not args.skip_2miners:
         for coin in parse_2miners_coins(args.coins):

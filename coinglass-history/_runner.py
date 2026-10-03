@@ -10,6 +10,9 @@ from typing import Any, Callable
 
 import _common as C
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import _watermark as WM  # noqa: E402
+
 EXCHANGE_LIST_PARAM = ",".join(C.TRACKED_EXCHANGES)
 
 OPTION_SYMBOLS = ("BTC", "ETH")
@@ -68,19 +71,26 @@ def run_per_instrument(
 
     by_ex = C.load_instruments(market)
     tuples: list[tuple[str, str, str]] = []
+    excluded_tradfi = 0
     for exchange, items in sorted(by_ex.items()):
         if ex_f and exchange not in ex_f:
             continue
         for it in items:
             iid = it.get("instrument_id") or ""
+            # coinglass 停 tradfi：Stocks/Commodities/Indices 改由交易所直连独占，此处排除
+            base = it.get("base_asset") or C.extract_base_from_instrument(iid)
+            if C.is_tradfi_base(base):
+                excluded_tradfi += 1
+                continue
             if sym_f and iid not in sym_f:
-                base = it.get("base_asset") or ""
                 if base not in sym_f and not any(iid.startswith(s) for s in sym_f):
                     continue
             for interval in intervals:
                 tuples.append((exchange, iid, interval))
     if args.max_tuples and args.max_tuples > 0:
         tuples = tuples[: args.max_tuples]
+    if excluded_tradfi:
+        print(f"[tradfi-excluded] skipped {excluded_tradfi} coinglass tradfi instruments (Stocks/Commodities/Indices)", flush=True)
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     status_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -93,10 +103,11 @@ def run_per_instrument(
     limiter = C.ApiRequestLimiter(args.sleep)
     failures = C.FailureBudget(args.max_failures)
     stats = C.JobStats()
+    wm_gate = WM.Gate()  # 磁盘/outbox 高水位门闩:触发后剩余 tuple 直接跳过,JSON 不再涨盘
 
     def _worker(idx: int, job: tuple[str, str, str]) -> dict:
         exchange, symbol, interval = job
-        if failures.exceeded():
+        if failures.exceeded() or wm_gate.blocked():
             return {
                 "index": idx,
                 "exchange": exchange,
@@ -105,7 +116,7 @@ def run_per_instrument(
                 "status_code": 0,
                 "ok": False,
                 "skipped": True,
-                "error_body": "failure budget exceeded",
+                "error_body": "watermark blocked" if wm_gate.blocked() else "failure budget exceeded",
             }
 
         cf = cache_dir / f"{C.safe_filename(exchange, symbol, interval)}.csv"

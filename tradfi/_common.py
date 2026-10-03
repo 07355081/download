@@ -59,6 +59,25 @@ SYMBOL_SYNONYMS = {
     "UKOIL": "BZ", "BRENTOIL": "BRENT", "NATGAS": "NG",
 }
 
+# 已知与 tradfi 符号表 / tag Stocks 撞名的加密资产：强制判为非 tradfi（None），
+# 避免把真加密（QNT=Quant、DIA=DIA 预言机）误当股票/指数而从 coinglass 下线。
+# 如发现更多撞名，往这里补即可（单一真源，native 发现 + coinglass 排除 + route 均生效）。
+# SPX=SPX6900 meme（≠标普,标普用 SPX500/SPY/US500）；PAXG/XAUT=黄金背书加密代币（≠真金 XAU/XAG）。
+# 这几个只在"靠 base 集合识别"的适配器(MEXC/HTX/Kraken)里会误判,原生标记型适配器不受影响。
+CRYPTO_OVERRIDE = {"QNT", "DIA", "SPX", "PAXG", "XAUT"}
+
+# 无歧义加密 base：即使适配器传 native_stock=True 也不得进 TradFi。
+# 用于拦住 HIP-3 加密盘（hyna:BTC）和由此污染的 HTX 白名单（BTC-USDT 永续）。
+# 不要放可能与股票/ETF 撞名的短代码（IP / LIT / GAS）。
+CRYPTO_BASES = {
+    "BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "BCH", "LTC", "SUI",
+    "XMR", "ZEC", "LINK", "DOT", "AVAX", "ATOM", "NEAR", "ARB", "OP",
+    "FIL", "UNI", "AAVE", "MKR", "LDO", "PEPE", "SHIB", "WIF", "BONK",
+    "FARTCOIN", "ENA", "HYPE", "PUMP", "BASED", "XPL", "LIGHTER", "USDE",
+    "TOTAL2", "TRX", "TON", "SEI", "TIA", "INJ", "WLD", "ONDO", "JUP",
+    "RENDER", "FET", "TAO", "PENDLE", "IMX", "RUNE",
+}
+
 
 def normalize_base(base: str) -> str:
     b = (base or "").strip().upper()
@@ -97,14 +116,28 @@ def load_tag_stocks() -> set[str]:
     return out
 
 
+def is_crypto_base(base_raw: str) -> bool:
+    """True 表示该 base 绝不能进 TradFi（含 native_stock=True / 跨所白名单）。"""
+    raw = (base_raw or "").strip().upper()
+    base = normalize_base(strip_stock_suffix(raw))
+    if base in CRYPTO_OVERRIDE or base in CRYPTO_BASES:
+        return True
+    if raw.startswith("1000") and len(raw) > 4:
+        return True
+    return False
+
+
 def classify_sector(base_raw: str, *, native_stock: bool = False) -> str | None:
     """返回 Stocks / Commodities / Indices；forex / 无法判定返回 None。
 
     个股识别 = 交易所原生标记（native_stock，如 instCategory=3 / symbolType=stock /
     isRwa / *STOCK* 后缀）或 base_asset 命中 tag 的 Stocks 集合。
     大宗 / 指数用固定集合判定。
+    加密（CRYPTO_OVERRIDE / CRYPTO_BASES）一律 None，避免 HIP-3/HTX 永续混进 Stocks。
     """
     base = normalize_base(strip_stock_suffix(base_raw))
+    if is_crypto_base(base_raw):
+        return None
     if base in FOREX_BASES:
         return None
     if base in COMMODITY_BASES:
@@ -141,17 +174,55 @@ class HttpResult:
 _SSL_CTX = ssl.create_default_context()
 
 
-def _proxy_handler() -> urllib.request.BaseHandler | None:
-    proxy = (
+def _current_proxy() -> str:
+    return (
         os.environ.get("HTTPS_PROXY")
         or os.environ.get("https_proxy")
         or os.environ.get("HTTP_PROXY")
         or os.environ.get("http_proxy")
         or os.environ.get("ALL_PROXY")
         or os.environ.get("all_proxy")
+        or ""
     )
+
+
+def _socks_handler(proxy: str) -> urllib.request.BaseHandler:
+    """为 socks4/socks5/socks5h 代理（如 ssh -D 建立的本地 SOCKS）构造 urllib handler。
+
+    需要 PySocks（pip install PySocks）。socks5h 表示由代理端解析 DNS（跨境场景必须）。
+    """
+    try:
+        import socks  # type: ignore
+        from sockshandler import SocksiPyHandler  # type: ignore
+    except ImportError as e:  # noqa: BLE001
+        raise RuntimeError(
+            "检测到 SOCKS 代理但未安装 PySocks。请先 `pip install PySocks`。"
+            f" 代理={proxy}"
+        ) from e
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(proxy)
+    scheme = (parsed.scheme or "").lower()
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 1080
+    if scheme in ("socks5", "socks5h"):
+        ptype = socks.PROXY_TYPE_SOCKS5
+    elif scheme in ("socks4", "socks4a"):
+        ptype = socks.PROXY_TYPE_SOCKS4
+    else:
+        ptype = socks.PROXY_TYPE_SOCKS5
+    # socks5h / socks4a → rdns=True（远端解析域名）；socks5/socks4 亦默认远端解析更稳。
+    rdns = scheme in ("socks5h", "socks4a", "socks5", "socks4")
+    return SocksiPyHandler(ptype, host, port, rdns, parsed.username, parsed.password)
+
+
+def _proxy_handler() -> urllib.request.BaseHandler | None:
+    proxy = _current_proxy()
     if not proxy:
         return None
+    if proxy.lower().startswith("socks"):
+        return _socks_handler(proxy)
     return urllib.request.ProxyHandler({"http": proxy, "https": proxy})
 
 
@@ -209,6 +280,34 @@ class Http:
                 return res
             err = res.error
         return HttpResult(ok=False, error=err)
+
+    def post_json(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> HttpResult:
+        """POST JSON body（Hyperliquid info API 等）。"""
+        last_err = ""
+        body = json.dumps(payload).encode("utf-8")
+        base_headers = {"User-Agent": USER_AGENT, "Content-Type": "application/json", **(headers or {})}
+        for attempt in range(self.retries):
+            self._throttle()
+            try:
+                req = urllib.request.Request(url, data=body, headers=base_headers, method="POST")
+                with self._opener.open(req, timeout=self.timeout) as resp:
+                    raw = resp.read().decode("utf-8")
+                return HttpResult(ok=True, data=json.loads(raw))
+            except urllib.error.HTTPError as e:
+                last_err = f"HTTP {e.code}"
+                if e.code in (451, 403, 401):
+                    return HttpResult(ok=False, error=last_err)
+                time.sleep(1.0 + attempt * 1.5)
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+                last_err = str(e)[:120]
+                time.sleep(1.0 + attempt * 1.5)
+        return HttpResult(ok=False, error=last_err)
 
 
 # ───────────────────────── 输出 / 增量 ─────────────────────────

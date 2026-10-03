@@ -2,18 +2,38 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 import numpy as np
 
 
-BASE_DIR = Path(__file__).resolve().parent
-MAJOR_VOL_CSV = BASE_DIR / "major_vol_切勿删除.csv"
-BTC_DAILY_VWAP_CSV = BASE_DIR / "btc_daily_vwap.csv"
-ASSET_WIDE_CSV = BASE_DIR / "cex_total_assets_daily_wide.csv"
-FACTOR_DAILY_CSV = BASE_DIR / "cex_dynamic_factors_daily.csv"
-OUTPUT_XLSX = BASE_DIR / "cex_volume_pipeline_unified.xlsx"
+from _paths import (
+    ASSET_WIDE_CSV,
+    BTC_DAILY_VWAP_CSV,
+    CACHE_DIR,
+    FACTOR_DAILY_CSV,
+    MAJOR_VOL_CSV,
+    PIPELINE_XLSX,
+    ensure_cache_layout,
+)
+from _closed_months import date_in_closed_month, list_closed_months, period_is_closed
+
+BACKUP_DIR = CACHE_DIR / "backups"
+BACKUP_KEEP = 14
+DAILY_FREEZE_SHEETS = (
+    "现货",
+    "合约",
+    "现货usd",
+    "合约usd",
+    "现货usd调整",
+    "合约usd调整",
+)
+MONTHLY_FREEZE_SHEETS = ("现货月度", "合约月度")
+
+OUTPUT_XLSX = PIPELINE_XLSX
 EMA_SPAN = 14
 K_DEFAULT = 2.0
 EARLY_FACTOR_ANCHOR_WINDOW = 90
@@ -58,7 +78,6 @@ CATEGORY_OVERRIDES = {
     "kraken": "现货",
     "kucoin": "现货",
     "upbit": "现货",
-    "bitmart": "现货",
     "mxc": "现货",
     "bitmex": "合约",
     "deribit": "合约",
@@ -69,7 +88,6 @@ CATEGORY_OVERRIDES = {
     "binance_futures": "合约",
     "kumex": "合约",
     "bitfinex_futures": "合约",
-    "bitmart_futures": "合约",
     "dydx_perpetual_l1": "合约",
     "bitget": "现货",
     "mxc_futures": "合约",
@@ -99,7 +117,6 @@ SPOT_NAME_MAP = {
     "binance": "Binance",
     "bitfinex": "Bitfinex",
     "bitget": "Bitget",
-    "bitmart": "BitMart",
     "bybit_spot": "Bybit",
     "crypto_com": "Crypto.com",
     "deribit_spot": "Deribit",
@@ -119,7 +136,6 @@ FUTURES_NAME_MAP = {
     "binance_futures": "Binance",
     "bitfinex_futures": "Bitfinex",
     "bitget_futures": "Bitget",
-    "bitmart_futures": "BitMart",
     "bybit": "Bybit",
     "crypto_com_futures": "Crypto.com",
     "deribit": "Deribit",
@@ -137,7 +153,6 @@ SPOT_KEEP_EXCHANGES = [
     "Binance",
     "Bitfinex",
     "Bitget",
-    "BitMart",
     "Bybit",
     "Crypto.com",
     "Deribit",
@@ -157,7 +172,6 @@ FUTURES_KEEP_EXCHANGES = [
     "Binance",
     "Bitfinex",
     "Bitget",
-    "BitMart",
     "Bybit",
     "Crypto.com",
     "Deribit",
@@ -175,7 +189,6 @@ CORE_EXCHANGES = [
     "Binance",
     "Bitfinex",
     "Bitget",
-    "BitMart",
     "Bybit",
     "Crypto.com",
     "Deribit",
@@ -575,6 +588,164 @@ def monthly_summary(
     return out.reset_index()
 
 
+def backup_pipeline_xlsx(path: Path) -> Path | None:
+    """Copy existing pipeline xlsx before overwrite. Returns backup path or None."""
+    if not path.is_file():
+        return None
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dest = BACKUP_DIR / f"cex_volume_pipeline_unified_{stamp}.xlsx"
+    shutil.copy2(path, dest)
+    backups = sorted(BACKUP_DIR.glob("cex_volume_pipeline_unified_*.xlsx"))
+    for old in backups[:-BACKUP_KEEP]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    print(f"[freeze] backup → {dest}")
+    return dest
+
+
+def _normalize_daily_sheet(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    date_col = out.columns[0]
+    out = out.rename(columns={date_col: "date"})
+    out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    return out.dropna(subset=["date"])
+
+
+def freeze_daily_closed_months(new_df: pd.DataFrame, old_df: pd.DataFrame | None, closed: set[str]) -> pd.DataFrame:
+    """Keep old daily rows whose date falls in a closed month."""
+    if not closed or old_df is None or old_df.empty:
+        return new_df
+    new_n = _normalize_daily_sheet(new_df)
+    old_n = _normalize_daily_sheet(old_df)
+    old_idx = old_n.set_index("date")
+    rows: list[dict] = []
+    frozen = 0
+    for _, row in new_n.iterrows():
+        day = str(row["date"])
+        if date_in_closed_month(day, closed) and day in old_idx.index:
+            kept = old_idx.loc[day]
+            if isinstance(kept, pd.DataFrame):
+                kept = kept.iloc[0]
+            merged = {"date": day}
+            for col in new_n.columns:
+                if col == "date":
+                    continue
+                merged[col] = kept[col] if col in kept.index else row[col]
+            rows.append(merged)
+            frozen += 1
+        else:
+            rows.append(row.to_dict())
+    # Preserve closed-month dates that exist only in old file
+    new_days = set(new_n["date"].astype(str))
+    for day, kept in old_idx.iterrows():
+        day_s = str(day)
+        if day_s in new_days or not date_in_closed_month(day_s, closed):
+            continue
+        merged = {"date": day_s}
+        for col in new_n.columns:
+            if col == "date":
+                continue
+            merged[col] = kept[col] if col in kept.index else pd.NA
+        rows.append(merged)
+        frozen += 1
+    out = pd.DataFrame(rows)
+    out = out.sort_values("date").reset_index(drop=True)
+    # Restore original first-column name if needed
+    first = new_df.columns[0]
+    if first != "date":
+        out = out.rename(columns={"date": first})
+    print(f"[freeze] daily kept closed rows≈{frozen}")
+    return out
+
+
+def freeze_monthly_closed_months(
+    new_df: pd.DataFrame, old_df: pd.DataFrame | None, closed: set[str]
+) -> pd.DataFrame:
+    """Keep old monthly columns for closed YYYY-MM."""
+    if not closed or old_df is None or old_df.empty:
+        return new_df
+    ex_col = new_df.columns[0]
+    out = new_df.copy()
+    old = old_df.copy()
+    old_ex = old.columns[0]
+    old = old.rename(columns={old_ex: ex_col})
+    old_by_ex = old.set_index(ex_col)
+    frozen_cols = 0
+    for col in list(out.columns):
+        if col == ex_col:
+            continue
+        key = str(col)
+        # excel may give Timestamp columns
+        try:
+            key = pd.Timestamp(col).strftime("%Y-%m")
+        except (ValueError, TypeError):
+            key = str(col)[:7]
+        if not period_is_closed(key, closed):
+            continue
+        # find matching old column
+        old_col = None
+        for c in old.columns:
+            if c == ex_col:
+                continue
+            try:
+                ck = pd.Timestamp(c).strftime("%Y-%m")
+            except (ValueError, TypeError):
+                ck = str(c)[:7]
+            if ck == key:
+                old_col = c
+                break
+        if old_col is None:
+            continue
+        for i, ex in enumerate(out[ex_col].tolist()):
+            if pd.isna(ex) or ex not in old_by_ex.index:
+                continue
+            out.at[i, col] = old_by_ex.at[ex, old_col]
+        frozen_cols += 1
+    print(f"[freeze] monthly kept closed cols={frozen_cols}")
+    return out
+
+
+def load_old_pipeline_sheets(path: Path) -> dict[str, pd.DataFrame]:
+    if not path.is_file():
+        return {}
+    try:
+        xl = pd.ExcelFile(path)
+    except Exception as e:
+        raise SystemExit(f"[freeze] cannot read existing pipeline for merge: {path} ({e})") from e
+    out: dict[str, pd.DataFrame] = {}
+    for name in list(DAILY_FREEZE_SHEETS) + list(MONTHLY_FREEZE_SHEETS):
+        if name in xl.sheet_names:
+            out[name] = pd.read_excel(xl, sheet_name=name)
+    return out
+
+
+def apply_closed_month_freeze(
+    sheets: dict[str, pd.DataFrame],
+    old_sheets: dict[str, pd.DataFrame],
+    closed: set[str],
+) -> dict[str, pd.DataFrame]:
+    if not closed:
+        print("[freeze] no closed months (no monthly_report_YYYY-MM.xlsx); write as computed")
+        return sheets
+    if not old_sheets:
+        raise SystemExit(
+            "[freeze] closed months exist but prior pipeline xlsx missing/unreadable; "
+            "refusing to overwrite. Restore cache/cex_volume_pipeline_unified.xlsx or backups/."
+        )
+    out = dict(sheets)
+    for name in DAILY_FREEZE_SHEETS:
+        if name in out:
+            out[name] = freeze_daily_closed_months(out[name], old_sheets.get(name), closed)
+    for name in MONTHLY_FREEZE_SHEETS:
+        if name in out:
+            out[name] = freeze_monthly_closed_months(out[name], old_sheets.get(name), closed)
+    print(f"[freeze] closed months: {', '.join(sorted(closed))}")
+    return out
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="按资产约束调整 CEX 成交量")
     parser.add_argument(
@@ -587,6 +758,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    ensure_cache_layout()
     args = parse_args()
     if not np.isfinite(args.k) or args.k <= 0:
         raise ValueError(f"--k 必须是正数，当前值: {args.k}")
@@ -656,19 +828,29 @@ def main() -> None:
     spot_monthly_df = monthly_summary(spot_usd_adj_df, "date")
     futures_monthly_df = monthly_summary(futures_usd_adj_df, "date")
 
+    closed = list_closed_months()
+    sheets = {
+        "现货": spot_df,
+        "合约": futures_df,
+        "现货usd": spot_usd_df,
+        "合约usd": futures_usd_df,
+        "现货usd调整": spot_usd_adj_df,
+        "合约usd调整": futures_usd_adj_df,
+        "现货月度": spot_monthly_df,
+        "合约月度": futures_monthly_df,
+    }
+    # 写前备份，再与旧文件合并冻结 closed 月（失败则中止，避免空盖）
+    backup_pipeline_xlsx(OUTPUT_XLSX)
+    old_sheets = load_old_pipeline_sheets(OUTPUT_XLSX)
+    sheets = apply_closed_month_freeze(sheets, old_sheets, closed)
+
     with pd.ExcelWriter(OUTPUT_XLSX, engine="openpyxl") as writer:
-        spot_df.to_excel(writer, sheet_name="现货", index=False)
-        futures_df.to_excel(writer, sheet_name="合约", index=False)
-        spot_usd_df.to_excel(writer, sheet_name="现货usd", index=False)
-        futures_usd_df.to_excel(writer, sheet_name="合约usd", index=False)
-        spot_usd_adj_df.to_excel(writer, sheet_name="现货usd调整", index=False)
-        futures_usd_adj_df.to_excel(writer, sheet_name="合约usd调整", index=False)
-        spot_monthly_df.to_excel(writer, sheet_name="现货月度", index=False)
-        futures_monthly_df.to_excel(writer, sheet_name="合约月度", index=False)
+        for name, frame in sheets.items():
+            frame.to_excel(writer, sheet_name=name, index=False)
 
     print(f"输出完成: {OUTPUT_XLSX}")
     print(f"因子已更新: {FACTOR_DAILY_CSV}")
-    print(f"现货日度行数: {len(spot_df)}, 合约日度行数: {len(futures_df)}")
+    print(f"现货日度行数: {len(sheets['现货'])}, 合约日度行数: {len(sheets['合约'])}")
     print(f"本次使用 k: {k_value}")
 
 

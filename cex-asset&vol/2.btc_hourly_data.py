@@ -24,9 +24,10 @@ from typing import Any
 
 import pandas as pd
 
-BASE_DIR = Path(__file__).resolve().parent
-HOURLY_CSV = BASE_DIR / "btc_hourly_data.csv"
-DAILY_VWAP_CSV = BASE_DIR / "btc_daily_vwap.csv"
+from _paths import BASE_DIR, BTC_DAILY_VWAP_CSV, BTC_HOURLY_CSV, ensure_cache_layout
+
+HOURLY_CSV = BTC_HOURLY_CSV
+DAILY_VWAP_CSV = BTC_DAILY_VWAP_CSV
 
 COINGLASS_ROOT = BASE_DIR.parent / "coinglass-history"
 SPOT_CACHE_DIR = COINGLASS_ROOT / "spot-price-history" / "cache"
@@ -372,6 +373,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    ensure_cache_layout()
     args = parse_args()
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
     start_ms = int(datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc).timestamp() * 1000)

@@ -26,6 +26,7 @@ LEGACY_CACHE_DIR = SCRIPT_DIR / "cache"
 
 CSV_HEADER = ["endpoint", "kind", "timestamp_ms", "date", "group", "field", "value"]
 
+COINGLASS_API_KEY = "377718ae2a9747c197167237a0821cca"
 DEFAULT_RECHECK_DAYS = 2
 DAY_MS = 24 * 60 * 60 * 1000
 
@@ -148,8 +149,7 @@ def resolve_api_key(arg_key: str | None) -> str:
     if arg_key:
         return arg_key
     load_env(SCRIPT_DIR / ".env")
-    load_env(SCRIPT_DIR.parent / ".env")
-    key = (os.environ.get("COINGLASS_API_KEY") or "").strip()
+    key = os.environ.get("COINGLASS_API_KEY") or COINGLASS_API_KEY
     if not key:
         sys.exit("ERROR: COINGLASS_API_KEY not provided.")
     return key

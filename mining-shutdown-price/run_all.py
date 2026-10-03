@@ -27,7 +27,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-hashrate", action="store_true", help="Skip 2.download_hashrate.py")
     parser.add_argument("--skip-shutdown", action="store_true", help="Skip 3.compute_shutdown.py")
     parser.add_argument("--skip-convert", action="store_true", help="Skip 4.csv_to_json.py")
-    parser.add_argument("--skip-bitinfocharts", action="store_true")
+    parser.add_argument(
+        "--skip-bitinfocharts",
+        action="store_true",
+        help="Skip BitInfoCharts multi-coin scrape (recommended on VPS; BTC metrics use mempool)",
+    )
+    parser.add_argument("--skip-btc-chain", action="store_true", help="Skip mempool BTC chain metrics")
     parser.add_argument("--skip-2miners", action="store_true")
     parser.add_argument("--coins", default="bch,etc,kas,ckb,zec")
     parser.add_argument("--compact", action="store_true")
@@ -60,6 +65,8 @@ def main() -> None:
         cmd = [py, str(STEP_HASHRATE), "--coins", str(args.coins)]
         if args.skip_bitinfocharts:
             cmd.append("--skip-bitinfocharts")
+        if args.skip_btc_chain:
+            cmd.append("--skip-btc-chain")
         if args.skip_2miners:
             cmd.append("--skip-2miners")
         run_step(cmd, "Step 2/4: download hashrate + BTC chain metrics")

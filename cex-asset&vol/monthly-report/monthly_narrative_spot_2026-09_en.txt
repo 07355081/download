@@ -1,0 +1,10 @@
+September 2026 Exchange Spot Volume Report: total $696.7 billion, MoM increased 36.5%
+Statistics compiled by the WuBlockchain team: https://data.wublockchain.xyz/dashboard/exchange_volume
+
+In September 2026, spot trading volume across major exchanges totaled about $696.7 billion, increased approximately 36.5% from $510.4 billion in August 2026. The sample covers 14 exchanges, of which 14 rose and 0 fell month over month.
+
+By notional volume, the top three were Binance $307.8 billion (44.2% share), OKX $65.8 billion (9.5% share), Coinbase $61.3 billion (8.8% share). On concentration, the largest venue held about 44.2%, while the top three combined for about 62.4%.
+
+The three strongest MoM performers were Bitfinex $13.8 billion (+112.5%), Uniswap $37.6 billion (+88.9%), Upbit $19.0 billion (+81.6%); the three largest declines were HTX $14.5 billion (+18.7%), MEXC $18.9 billion (+25.8%), Binance $307.8 billion (+26.6%).
+
+Note: The data may involve significant wash-trading or bot activity. Figures have been preprocessed, including outlier removal, calibration, and standardization.

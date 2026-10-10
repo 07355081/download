@@ -71,6 +71,7 @@ STABLECOIN_ROOT = SCRIPT_DIR / "stablecoin"
 MINING_SHUTDOWN_PRICE_ROOT = SCRIPT_DIR / "mining-shutdown-price"
 HYPERLIQUID_ROOT = SCRIPT_DIR / "hyperliquid"
 UNI_BURN_ROOT = SCRIPT_DIR / "uni-burn"
+TOKEN_BURNS_ROOT = SCRIPT_DIR / "token-burns"
 ROBINHOOD_ROOT = SCRIPT_DIR / "robinhood-chain"
 # TradFi 交易所直连输出（独立目录，与 coinglass 完全隔离）
 TRADFI_ROOT = SCRIPT_DIR / "tradfi"
@@ -118,6 +119,14 @@ HYPERLIQUID_JSON_FILES: list[str] = [
 # uni-burn/output/json → public/json/uni-burn/ (须与 uni-burn/download.py 的 QUERIES 一致)
 UNI_BURN_JSON_FILES: list[str] = [
     "daily_by_chain.json",
+]
+
+# token-burns/output/json → public/json/token-burns/
+TOKEN_BURNS_JSON_FILES: list[str] = [
+    "uni.json",
+    "pump.json",
+    "pons.json",
+    "hype.json",
 ]
 
 # robinhood-chain/output/json → public/json/robinhood-chain/
@@ -313,7 +322,7 @@ def main() -> None:
         "--only",
         choices=(
             "all", "coinglass", "treasuries", "cex", "tag", "btc-index", "options",
-            "stablecoin", "mining-shutdown-price", "hyperliquid", "uni-burn", "robinhood-chain",
+            "stablecoin", "mining-shutdown-price", "hyperliquid", "uni-burn", "token-burns", "robinhood-chain",
             "tradfi", "tradfi-spot", "tradfi-spot-live", "strategy-mstr",
         ),
         default="all",
@@ -334,6 +343,7 @@ def main() -> None:
     copy_mining_shutdown_price = args.only in ("all", "mining-shutdown-price")
     copy_hyperliquid = args.only in ("all", "hyperliquid")
     copy_uni_burn = args.only in ("all", "uni-burn")
+    copy_token_burns = args.only in ("all", "token-burns")
     copy_robinhood = args.only in ("all", "robinhood-chain")
     copy_tradfi = args.only in ("all", "tradfi")
     copy_tradfi_spot = args.only == "tradfi-spot"
@@ -350,6 +360,7 @@ def main() -> None:
     mining_shutdown_price_src = MINING_SHUTDOWN_PRICE_ROOT / "output" / "json"
     hyperliquid_src = HYPERLIQUID_ROOT / "output" / "json"
     uni_burn_src = UNI_BURN_ROOT / "output" / "json"
+    token_burns_src = TOKEN_BURNS_ROOT / "output" / "json"
     robinhood_src = ROBINHOOD_ROOT / "output" / "json"
     # tradfi 交易所直连：price/oi/funding 各一目录，1:1 镜像（可安全 mirror-delete 本目录，不碰 coinglass）
     tradfi_json_src = TRADFI_ROOT / "output" / "json"
@@ -372,7 +383,7 @@ def main() -> None:
         f"cex={copy_cex} tag={copy_tag} btc-index={copy_btc_index} options={copy_options} "
         f"stablecoin={copy_stablecoin} mining-shutdown-price={copy_mining_shutdown_price} "
         f"hyperliquid={copy_hyperliquid} uni-burn={copy_uni_burn} "
-        f"robinhood-chain={copy_robinhood} tradfi={copy_tradfi} "
+        f"token-burns={copy_token_burns} robinhood-chain={copy_robinhood} tradfi={copy_tradfi} "
         f"tradfi-spot={copy_tradfi_spot} tradfi-spot-live={copy_tradfi_spot_live} "
         f"strategy-mstr={copy_strategy_mstr}"
     )
@@ -603,6 +614,30 @@ def main() -> None:
             src_label=str(uni_burn_src),
         )
         print(f"[uni-burn] {'uni-burn':<45} {tag}")
+        total_copied += copied
+        total_skipped += skipped
+        total_bytes += bytes_c
+        total_removed += removed
+
+    if copy_token_burns:
+        token_burns_dst = dest_root / "token-burns"
+        copied, skipped, bytes_c, removed = sync_named_json_files(
+            token_burns_src,
+            token_burns_dst,
+            TOKEN_BURNS_JSON_FILES,
+            args.force,
+            args.dry_run,
+        )
+        tag = format_sync_tag(
+            copied,
+            skipped,
+            bytes_c,
+            removed,
+            total=copied + skipped,
+            src_exists=token_burns_src.is_dir(),
+            src_label=str(token_burns_src),
+        )
+        print(f"[token-burns] {'token-burns':<45} {tag}")
         total_copied += copied
         total_skipped += skipped
         total_bytes += bytes_c

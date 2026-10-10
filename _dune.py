@@ -9,6 +9,8 @@
   就自己 POST /execute 触发一次真实执行,轮询到完成后按 execution_id 取结果。
   owner 自己有调度且缓存还新的 query 走不到触发分支,不花执行额度。
   ASXN 的 Hyperliquid 系列一旦停调度,同样由这个分支接管。
+  任何 POST /execute 之前都先核对写死上限:近 14 天 2500 credits、近 30 天 4000 credits。
+  直接运行本文件只刷新账本并打印用量,不会触发执行。
 
 为什么只用标准库、不用 dune-client:
   判断新鲜度要读 execution_ended_at,取结果要按 execution_id 走 /execution/{id}/results,
@@ -26,14 +28,32 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 API_BASE = "https://api.dune.com/api/v1"
 
 # 全历史扫描一次要几百 credits。日常不准自动 POST /execute；
-# --force-execute 仍可手动跑。窄查询换了新的 query id 之后不受这份名单影响。
+# --force-execute 仍可手动跑,但过不了下面的额度上限。
+# 窄查询换了新的 query id 之后不受这份名单影响。
 AUTO_EXECUTE_BLOCKLIST = frozenset({8024180, 8260046})
+
+# 写死的账户级上限。不许改成环境变量,不许另加跳过开关。
+# --force-execute 也要先过这里。近 14 天滚动不得超过 2500,近 30 天滚动不得超过 4000。
+CREDIT_LIMIT_14D = 2500.0
+CREDIT_LIMIT_30D = 4000.0
+# 没跑过、账本里没有实测的 query,按这个数预占额度。宁可拦住,也不许先跑出一笔未知大额。
+UNMEASURED_QUERY_CREDITS = 500.0
+# 已经实测过的贵查询。估计成本取「账本里该 query 的最大值」和这里的较大者。
+KNOWN_QUERY_CREDIT_FLOOR = {
+    8884658: 517.0,  # robinhood launchpad_activity
+    7916628: 165.0,  # robinhood active_wallets
+    8073404: 138.0,  # robinhood rwa_aum
+    8024180: 500.0,  # 全历史,禁止自动执行
+    8260046: 500.0,  # UNI 全历史,禁止自动执行
+}
+LEDGER_PATH = Path(__file__).resolve().parent / ".dune-credit-ledger.json"
+_LEDGER_LOCK = LEDGER_PATH.with_suffix(".lock")
 
 
 def now_utc_iso() -> str:
@@ -85,6 +105,14 @@ class DuneCreditsExhausted(RuntimeError):
     """本计费周期 datapoint 额度已用尽。同一轮里不应再 POST /execute。"""
 
 
+class DuneExecutionFailed(RuntimeError):
+    """执行结束但不是成功。status 上可能仍有 execution_cost_credits。"""
+
+    def __init__(self, message: str, status: dict) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 def explain_dune_http(method: str, url: str, code: int, detail: str) -> RuntimeError:
     """把 Dune 的 HTTP 错误收成一行原因。402 与档位错误分开，方便日志判断。"""
     text = detail.lower()
@@ -95,6 +123,145 @@ def explain_dune_http(method: str, url: str, code: int, detail: str) -> RuntimeE
     return RuntimeError(f"Dune {method} {url} -> HTTP {code}: {detail}")
 
 
+def _parse_entry_at(value: str | None) -> datetime | None:
+    return parse_dune_ts(value)
+
+
+def credits_in_window(entries: list[dict], days: int, now: datetime | None = None) -> float:
+    """滚动窗口内的 credits。at 落在窗口起点上的记录算在内。"""
+    moment = now or datetime.now(timezone.utc)
+    cutoff = moment - timedelta(days=days)
+    total = 0.0
+    for entry in entries:
+        at = _parse_entry_at(entry.get("at") if isinstance(entry, dict) else None)
+        if at is None or at < cutoff:
+            continue
+        credits = entry.get("credits")
+        if isinstance(credits, (int, float)):
+            total += float(credits)
+    return total
+
+
+def estimate_query_credits(entries: list[dict], query_id: int) -> float:
+    seen = [
+        float(entry["credits"])
+        for entry in entries
+        if isinstance(entry, dict)
+        and entry.get("kind") == "execution"
+        and entry.get("query_id") == query_id
+        and isinstance(entry.get("credits"), (int, float))
+        and float(entry["credits"]) > 0
+    ]
+    floor = float(KNOWN_QUERY_CREDIT_FLOOR.get(query_id, 0.0))
+    if seen:
+        return max(floor, max(seen))
+    if floor > 0:
+        return floor
+    return UNMEASURED_QUERY_CREDITS
+
+
+def _period_bounds(period: dict) -> tuple[str, str] | None:
+    start = str(period.get("start_date") or "")[:10]
+    end = str(period.get("end_date") or "")[:10]
+    if len(start) != 10 or len(end) != 10:
+        return None
+    if end < start:
+        start, end = end, start
+    return start, end
+
+
+def _empty_ledger() -> dict:
+    return {"entries": []}
+
+
+def _load_ledger() -> dict:
+    if not LEDGER_PATH.exists():
+        return _empty_ledger()
+    try:
+        doc = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _empty_ledger()
+    if not isinstance(doc, dict) or not isinstance(doc.get("entries"), list):
+        return _empty_ledger()
+    return doc
+
+
+def _save_ledger(doc: dict) -> None:
+    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = LEDGER_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(LEDGER_PATH)
+
+
+def _with_ledger(mutator) -> dict:
+    """独占读写账本。mutator 就地修改 doc,返回值忽略。"""
+    for _ in range(50):
+        try:
+            fd = os.open(str(_LEDGER_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            time.sleep(0.05)
+    else:
+        raise DuneCreditsExhausted("额度账本被占用,拒绝执行")
+    try:
+        doc = _load_ledger()
+        mutator(doc)
+        _save_ledger(doc)
+        return doc
+    finally:
+        os.close(fd)
+        try:
+            _LEDGER_LOCK.unlink()
+        except OSError:
+            pass
+
+
+def _sync_reconcile(doc: dict, periods: list[dict]) -> None:
+    """用账户用量补上账本里没有逐笔记下的消耗。同一计费周期只保留一条差额,不重复累加。"""
+    entries: list[dict] = doc["entries"]
+    for period in periods:
+        bounds = _period_bounds(period)
+        if bounds is None:
+            continue
+        start, end = bounds
+        api_used = period.get("credits_used")
+        if not isinstance(api_used, (int, float)):
+            continue
+        exec_sum = 0.0
+        for entry in entries:
+            if entry.get("kind") != "execution":
+                continue
+            day = str(entry.get("at") or "")[:10]
+            if start <= day <= end and isinstance(entry.get("credits"), (int, float)):
+                exec_sum += float(entry["credits"])
+        gap = max(0.0, float(api_used) - exec_sum)
+        existing = next(
+            (
+                entry
+                for entry in entries
+                if entry.get("kind") == "reconcile" and entry.get("period_start") == start
+            ),
+            None,
+        )
+        if existing is not None:
+            existing["credits"] = gap
+            existing["period_end"] = end
+            existing["api_credits_used"] = float(api_used)
+            continue
+        if gap <= 0:
+            continue
+        entries.append(
+            {
+                "kind": "reconcile",
+                "at": now_utc_iso(),
+                "credits": gap,
+                "period_start": start,
+                "period_end": end,
+                "api_credits_used": float(api_used),
+            }
+        )
+
+
 class DuneApi:
     """只封装需要的几个 Dune REST 接口(results / execute / status)。"""
 
@@ -102,6 +269,8 @@ class DuneApi:
         self._headers = {"X-Dune-API-Key": api_key, "Content-Type": "application/json"}
         self._timeout = timeout
         self.credits_exhausted = False
+        self._budget_snapshot: dict | None = None
+        self._budget_snapshot_at = 0.0
 
     def _request(self, method: str, url: str, body: dict | None = None) -> dict:
         data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -120,11 +289,110 @@ class DuneApi:
         """只取 1 行,用来判断缓存执行时间,几乎不花额度。"""
         return self._request("GET", f"{API_BASE}/query/{query_id}/results?limit=1")
 
+    def billing_periods(self) -> list[dict]:
+        """只读账户用量。这个接口不执行查询,也不新扣执行额度。"""
+        res = self._request("POST", f"{API_BASE}/usage", {})
+        periods = res.get("billing_periods")
+        return [period for period in periods if isinstance(period, dict)] if isinstance(periods, list) else []
+
+    def credit_snapshot(self, *, force: bool = False) -> dict:
+        """刷新账本差额,返回两个滚动窗口已用额度。30 秒内复用同一份,执行前强制重读。"""
+        fresh = self._budget_snapshot is not None and (time.time() - self._budget_snapshot_at) < 30
+        if fresh and not force and self._budget_snapshot is not None:
+            return self._budget_snapshot
+        periods = self.billing_periods()
+
+        def mutate(doc: dict) -> None:
+            _sync_reconcile(doc, periods)
+
+        doc = _with_ledger(mutate)
+        entries = doc["entries"]
+        snapshot = {
+            "entries": entries,
+            "used_14d": credits_in_window(entries, 14),
+            "used_30d": credits_in_window(entries, 30),
+        }
+        self._budget_snapshot = snapshot
+        self._budget_snapshot_at = time.time()
+        return snapshot
+
+    def format_credit_budget(self) -> str:
+        snap = self.credit_snapshot()
+        return (
+            f"Dune 额度: 近14天 {snap['used_14d']:.2f}/{CREDIT_LIMIT_14D:.0f}, "
+            f"近30天 {snap['used_30d']:.2f}/{CREDIT_LIMIT_30D:.0f}"
+        )
+
+    def execution_block_reason(self, query_id: int) -> str | None:
+        """会让任一滚动窗口超过写死上限时,返回拒绝原因。强制执行同样走这里。"""
+        try:
+            snap = self.credit_snapshot(force=True)
+        except DuneCreditsExhausted:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return f"无法核对 Dune 用量({exc}),拒绝执行"
+        estimate = estimate_query_credits(snap["entries"], query_id)
+        used_14 = float(snap["used_14d"])
+        used_30 = float(snap["used_30d"])
+        if used_14 + estimate > CREDIT_LIMIT_14D or used_30 + estimate > CREDIT_LIMIT_30D:
+            return (
+                f"额度上限: 近14天 {used_14:.2f}/{CREDIT_LIMIT_14D:.0f}, "
+                f"近30天 {used_30:.2f}/{CREDIT_LIMIT_30D:.0f}, "
+                f"q={query_id} 估计还要 {estimate:.1f} credits,拒绝执行"
+            )
+        return None
+
+    def result_download_block_reason(self) -> str | None:
+        """整表下载也扣 datapoint。窗口已经放不下一笔下载时,不再拉。"""
+        try:
+            snap = self.credit_snapshot()
+        except DuneCreditsExhausted:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return f"无法核对 Dune 用量({exc}),拒绝下载整表"
+        estimate = 1.0
+        used_14 = float(snap["used_14d"])
+        used_30 = float(snap["used_30d"])
+        if used_14 + estimate > CREDIT_LIMIT_14D or used_30 + estimate > CREDIT_LIMIT_30D:
+            return (
+                f"额度上限: 近14天 {used_14:.2f}/{CREDIT_LIMIT_14D:.0f}, "
+                f"近30天 {used_30:.2f}/{CREDIT_LIMIT_30D:.0f}, 拒绝下载整表"
+            )
+        return None
+
+    def record_execution_cost(self, query_id: int, execution_id: str, status: dict) -> None:
+        credits = status.get("execution_cost_credits")
+        if not isinstance(credits, (int, float)):
+            return
+        ended = status.get("execution_ended_at")
+        at = ended if isinstance(ended, str) and parse_dune_ts(ended) else now_utc_iso()
+
+        def mutate(doc: dict) -> None:
+            entries: list[dict] = doc["entries"]
+            if any(entry.get("execution_id") == execution_id for entry in entries):
+                return
+            entries.append(
+                {
+                    "kind": "execution",
+                    "at": at,
+                    "credits": float(credits),
+                    "query_id": query_id,
+                    "execution_id": execution_id,
+                }
+            )
+
+        _with_ledger(mutate)
+        self._budget_snapshot = None
+
     def execute(self, query_id: int, performance: str | None) -> str:
         # 档位跟套餐绑定:有的账号不认 medium(会 400 Invalid performance tier)。
         # 不传则让 Dune 按当前 key 的默认引擎选。
         if self.credits_exhausted:
             raise DuneCreditsExhausted("额度不足: 本轮已确认 datapoint 用尽,不再执行")
+        blocked = self.execution_block_reason(query_id)
+        if blocked:
+            self.credits_exhausted = True
+            raise DuneCreditsExhausted(blocked)
         body = {"performance": performance} if performance else None
         res = self._request("POST", f"{API_BASE}/query/{query_id}/execute", body)
         execution_id = res.get("execution_id")
@@ -153,7 +421,10 @@ def wait_for_execution(api: DuneApi, execution_id: str, timeout_s: float, poll_s
         state = st.get("state", "")
         if st.get("is_execution_finished") or state.endswith(("COMPLETED", "FAILED", "CANCELLED")):
             if not state.endswith("COMPLETED"):
-                raise RuntimeError(f"execution {execution_id} 结束但状态为 {state}")
+                raise DuneExecutionFailed(
+                    f"execution {execution_id} 结束但状态为 {state}",
+                    st,
+                )
             return st
         if time.time() >= deadline:
             raise RuntimeError(
@@ -246,8 +517,14 @@ def fetch_query(
             why = f"{age_txt},--no-execute 兜底"
         else:
             why = f"{age_txt} <= {args.max_age_hours}h"
+        download_block = api.result_download_block_reason()
+        if download_block:
+            if local_execution_id:
+                print(f"{indent}{download_block},保留本地文件")
+                return _unchanged(local_execution_id, cached_ended_at)
+            raise DuneCreditsExhausted(download_block)
         rows, first = api.rows(f"{API_BASE}/query/{query_id}/results")
-        print(f"{indent}复用缓存执行({why}),未消耗执行额度")
+        print(f"{indent}复用缓存执行({why}),未重新执行")
         return FetchResult(
             rows=rows,
             execution_id=first.get("execution_id"),
@@ -258,9 +535,16 @@ def fetch_query(
     reason = "强制执行" if args.force_execute else (
         f"缓存已 {age_h:.1f}h > {args.max_age_hours}h" if age_h is not None else "拿不到缓存执行时间"
     )
-    print(f"{indent}{reason},触发一次执行(performance={args.performance})…")
-    execution_id = api.execute(query_id, args.performance)
-    st = wait_for_execution(api, execution_id, args.exec_timeout, args.poll_interval)
+    perf = args.performance or ""
+    perf_txt = perf if perf else "default"
+    print(f"{indent}{reason},触发一次执行(performance={perf_txt})…")
+    execution_id = api.execute(query_id, perf or None)
+    try:
+        st = wait_for_execution(api, execution_id, args.exec_timeout, args.poll_interval)
+    except DuneExecutionFailed as exc:
+        api.record_execution_cost(query_id, execution_id, exc.status)
+        raise
+    api.record_execution_cost(query_id, execution_id, st)
     credits = st.get("execution_cost_credits")
     print(
         f"{indent}execution {execution_id} 完成"
@@ -318,8 +602,11 @@ def add_common_args(parser: argparse.ArgumentParser, default_max_age_hours: floa
     parser.add_argument("--force-execute", action="store_true", help="无视缓存年龄,强制触发执行")
     parser.add_argument("--no-execute", action="store_true", help="只读缓存,永不触发执行")
     parser.add_argument(
-        "--performance", default="free", choices=["", "free", "small", "medium", "large"],
-        help="执行算力档位;默认 free。当前这把 key 不认 medium/large,不传会走 2 分钟 Small 并超时",
+        "--performance",
+        default="",
+        choices=["", "free", "small", "medium", "large"],
+        help="执行算力档位;默认不传,让 Dune 按当前 key 选引擎。"
+        "这把 key 目前不认 free/medium/large,写死档位会 HTTP 400。",
     )
     parser.add_argument("--exec-timeout", type=float, default=900.0, help="等待执行完成的最长秒数")
     parser.add_argument("--poll-interval", type=float, default=5.0, help="轮询执行状态的间隔秒数")
@@ -384,6 +671,12 @@ def run_module(
     api = DuneApi(resolve_api_key(args.api_key, root_dir))
     targets = {args.only: queries[args.only]} if getattr(args, "only", None) else queries
 
+    if not args.dry_run:
+        try:
+            print(f"[{label}] {api.format_credit_budget()}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{label}] 无法读取 Dune 额度: {exc}")
+
     if args.dry_run:
         saved_age = args.max_age_hours
         print(f"[{label}] DRY-RUN:只检查缓存新鲜度")
@@ -447,3 +740,12 @@ def run_module(
     print(f"json -> {out_dir}")
     if failed:
         raise SystemExit(2)
+
+
+if __name__ == "__main__":
+    # 只读用量。不要在这里加执行查询的参数。
+    root = Path(__file__).resolve().parent
+    client = DuneApi(resolve_api_key(None, root))
+    print(client.format_credit_budget())
+    snap = client.credit_snapshot()
+    print(f"账本 {LEDGER_PATH} 共 {len(snap['entries'])} 条")

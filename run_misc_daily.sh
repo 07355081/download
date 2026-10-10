@@ -3,8 +3,8 @@
 #   btc-index(仅 Coinglass)/ crypto-treasuries(web 轻量)/ options(Deribit DVOL)/ stablecoin(DefiLlama)
 #   / hyperliquid(Dune 小表缓存超过 36h 才执行;按币种走官方接口)
 #   / uni-burn(Dune 窄查询,缓存超过 20h 才执行)
-#   / robinhood-chain(Dune 7 条 query:日交易笔数/活跃地址/DEX 成交/Launchpad/RWA 市值/币股成交;
-#                     多数读缓存;launchpad 窄查询单独 72h)
+#   / robinhood-chain(日交易笔数与 DEX 成交额是自有窄查询,缓存超过 20h 才执行;
+#                     其余读别人的 query,缓存超过 48h 才执行;launchpad 窄查询单独 72h)
 #   / mining-shutdown-price(Bitmain 实时 + mempool BTC 历史 + 2Miners;跳过 BitInfoCharts)
 #   / cex-asset&vol(CoinGecko 成交量 + DefiLlama USD/BTC 储备;中间产物在 cache/,发布 output/json)
 # 流程:增量下载 → csv_to_json(json 留 output/json)→ 派生 parquet 进 /root/outbox(供本机 rsync 拉走)
@@ -69,7 +69,10 @@ fi
   echo "[$(ts)] 7/12 uni-burn(Dune 窄查询,缓存超过 20h 才执行)..."
   $VENV uni-burn/run_all.py || echo "[$(ts)]   [WARN] uni-burn 失败,继续"
 
-  echo "[$(ts)] 8/12 robinhood-chain(Dune 7 条 query,缓存超 48h 才自己触发执行)..."
+  echo "[$(ts)] token-burns(CoinGecko / Pump / PONS / HYPE 余额,无新 Dune)..."
+  $VENV token-burns/download.py || echo "[$(ts)]   [WARN] token-burns 失败,继续"
+
+  echo "[$(ts)] 8/12 robinhood-chain(自有笔数/DEX 窄查询超 20h 执行;其余缓存超 48h)..."
   $VENV robinhood-chain/run_all.py || echo "[$(ts)]   [WARN] robinhood-chain 失败,继续"
 
   echo "[$(ts)] 9/12 mining-shutdown-price(Bitmain+mempool+2Miners,跳过 BitInfoCharts)..."
@@ -85,7 +88,7 @@ fi
     || echo "[$(ts)]   [WARN] to_parquet_misc 失败,继续"
 
   echo "[$(ts)] 12/12 镜像 json → dashboard(供网页) ..."
-  for only in btc-index treasuries options stablecoin hyperliquid uni-burn robinhood-chain mining-shutdown-price cex; do
+  for only in btc-index treasuries options stablecoin hyperliquid uni-burn token-burns robinhood-chain mining-shutdown-price cex; do
     $VENV copy_to_dashboard.py --dest /root/dashboard/public/json --only "$only" \
       || echo "[$(ts)]   [WARN] copy_to_dashboard --only $only 失败"
   done

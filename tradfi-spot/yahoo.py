@@ -60,6 +60,73 @@ def fetch_quotes(http: Http, yahoo_symbols: list[str]) -> dict[str, dict]:
     return out
 
 
+def fetch_session_quotes(http: Http, yahoo_symbols: list[str]) -> dict[str, dict]:
+    """正股常规交易时段的涨跌幅。只认 regularMarket，不含盘前盘后。
+
+    返回 {symbol: {last, change_pct, asof_ms, regular}}。
+    change_pct 是相对前收盘的百分数。不在常规时段的代码不出现。
+    """
+    out: dict[str, dict] = {}
+    if not yahoo_symbols:
+        return out
+    joined = ",".join(quote(s, safe="^=") for s in yahoo_symbols)
+    res = http.get_json(f"{QUOTE}?symbols={joined}")
+    if res.ok:
+        results = ((res.data or {}).get("quoteResponse") or {}).get("result") or []
+        for row in results:
+            parsed = _session_from_quote(row)
+            if parsed:
+                out[parsed[0]] = parsed[1]
+    for sym in yahoo_symbols:
+        if sym in out:
+            continue
+        one = _session_via_chart(http, sym)
+        if one:
+            out[sym] = one
+    return out
+
+
+def _session_from_quote(row: dict) -> tuple[str, dict] | None:
+    sym = str(row.get("symbol") or "")
+    if str(row.get("marketState") or "") != "REGULAR":
+        return None
+    last = to_num(row.get("regularMarketPrice"))
+    prev = to_num(row.get("regularMarketPreviousClose"))
+    change = to_num(row.get("regularMarketChangePercent"))
+    asof = to_ms(row.get("regularMarketTime"))
+    if change is None and last is not None and prev not in (None, 0):
+        change = (last - prev) / prev * 100.0
+    if not sym or last is None or change is None or asof is None:
+        return None
+    return sym, {"last": last, "change_pct": change, "asof_ms": asof, "regular": True}
+
+
+def _session_via_chart(http: Http, yahoo_symbol: str) -> dict | None:
+    sym = quote(yahoo_symbol, safe="^=")
+    res = http.get_json(QUOTE_CHART.format(symbol=sym))
+    if not res.ok:
+        return None
+    chart = ((res.data or {}).get("chart") or {}).get("result") or []
+    if not chart:
+        return None
+    meta = chart[0].get("meta") or {}
+    last = to_num(meta.get("regularMarketPrice"))
+    prev = to_num(meta.get("chartPreviousClose") or meta.get("previousClose"))
+    asof = to_ms(meta.get("regularMarketTime"))
+    period = (meta.get("currentTradingPeriod") or {}).get("regular") or {}
+    start = to_ms(period.get("start"))
+    end = to_ms(period.get("end"))
+    regular = (
+        start is not None
+        and end is not None
+        and asof is not None
+        and start <= asof < end
+    )
+    if not regular or last is None or prev in (None, 0) or asof is None:
+        return None
+    return {"last": last, "change_pct": (last - prev) / prev * 100.0, "asof_ms": asof, "regular": True}
+
+
 def _quote_via_chart(http: Http, yahoo_symbol: str) -> dict | None:
     sym = quote(yahoo_symbol, safe="^=")
     res = http.get_json(QUOTE_CHART.format(symbol=sym))

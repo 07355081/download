@@ -1,18 +1,21 @@
 """Run the Hyperliquid pipeline.
 
-两步,都直接写 JSON(无需 CSV 中间层):
-  download.py        ASXN 的 HIP-3 / HIP-4 小表(缓存超过 36h 才自己执行);按币种走官方接口
-  download_fees.py   实测手续费(DefiLlama)+ 成交量拆分与 HyperEVM DEX(_dune.py)
+三步,都直接写 JSON(无需 CSV 中间层):
+  download.py            ASXN 的 HIP-3 / HIP-4 小表(默认超 7 天才自执行);按币种走官方接口
+  download_fees.py       实测手续费(DefiLlama)+ 成交量拆分与 HyperEVM DEX(_dune.py)
+  download_paperdash.py  Papertrade(PaperDash) stats,公开 API,不占 Dune 额度
 
-第二步失败不影响第一步已写好的文件,所以两步分开报错、整体以非零码结束,交由
+任一步失败不影响已写好的文件,分开报错、整体以非零码结束,交由
 run_misc_daily.sh 的 [WARN] 分支记录。
 
 Usage:
-  python run_all.py                     # 两步都跑
+  python run_all.py                     # 三步都跑
   python run_all.py --only hip4         # 只跑 download.py 的某个 query
-  python run_all.py --skip-fees         # 只跑第一步
-  python run_all.py --fees-only         # 只跑第二步
-  python run_all.py -- --no-execute     # `--` 之后的参数原样透传给 download_fees.py
+  python run_all.py --skip-fees         # 跳过 fees
+  python run_all.py --fees-only         # 只跑 fees
+  python run_all.py --skip-paperdash    # 跳过 PaperDash
+  python run_all.py --paperdash-only    # 只跑 PaperDash
+  python run_all.py -- --no-execute     # `--` 之后透传给 download.py 与 download_fees.py
 """
 from __future__ import annotations
 
@@ -24,6 +27,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOAD = BASE_DIR / "download.py"
 DOWNLOAD_FEES = BASE_DIR / "download_fees.py"
+DOWNLOAD_PAPERDASH = BASE_DIR / "download_paperdash.py"
 
 
 def run(label: str, cmd: list[str]) -> bool:
@@ -44,10 +48,19 @@ def main() -> None:
     parser.add_argument("--only", default=None, help="透传给 download.py 的单个 query name")
     parser.add_argument("--skip-fees", action="store_true", help="不跑 download_fees.py")
     parser.add_argument("--fees-only", action="store_true", help="只跑 download_fees.py")
+    parser.add_argument("--skip-paperdash", action="store_true", help="不跑 download_paperdash.py")
+    parser.add_argument("--paperdash-only", action="store_true", help="只跑 download_paperdash.py")
     args, passthrough = parser.parse_known_args()
     extra = [a for a in passthrough if a != "--"]
 
     results: list[bool] = []
+
+    if args.paperdash_only:
+        results.append(run("Hyperliquid: Papertrade / PaperDash", [args.python, str(DOWNLOAD_PAPERDASH)]))
+        print("\nDONE. outputs under hyperliquid/output/json/", flush=True)
+        if not all(results):
+            raise SystemExit(2)
+        return
 
     if not args.fees_only:
         cmd = [args.python, str(DOWNLOAD)]
@@ -55,6 +68,7 @@ def main() -> None:
             cmd += ["--api-key", args.api_key]
         if args.only:
             cmd += ["--only", args.only]
+        cmd += extra
         results.append(run("Hyperliquid: HIP-3/HIP-4 from Dune", cmd))
 
     if not args.skip_fees:
@@ -63,6 +77,9 @@ def main() -> None:
             cmd += ["--api-key", args.api_key]
         cmd += extra
         results.append(run("Hyperliquid: fees / volume split / HyperEVM DEX", cmd))
+
+    if not args.skip_paperdash and not args.fees_only:
+        results.append(run("Hyperliquid: Papertrade / PaperDash", [args.python, str(DOWNLOAD_PAPERDASH)]))
 
     print("\nDONE. outputs under hyperliquid/output/json/", flush=True)
     if not all(results):

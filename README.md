@@ -53,3 +53,8 @@ python copy_to_dashboard.py
 ```bash
 pip install -r requirements.txt
 ```
+
+## Dune 额度与地址监控
+
+- 贵查询已降频（Robinhood 7~14 天自跑；Hyperliquid 日常 `--no-execute`）。本地 14 天执行顶 **2100** credits（套餐约 2500，留缓冲）。
+- 黑客地址监控见 [`wallet-watch/README.md`](wallet-watch/README.md)（Etherscan/Tronscan/mempool，**不占 Dune**）。

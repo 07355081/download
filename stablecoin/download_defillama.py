@@ -105,6 +105,7 @@ class CoinSpec:
 CHAINS: list[ChainSpec] = [
     ChainSpec("aptos", "aptos"),
     ChainSpec("arbitrum", "arbitrum"),
+    ChainSpec("arc", "arc"),
     ChainSpec("avalanche", "avalanche"),
     ChainSpec("base", "base"),
     ChainSpec("bsc", "bsc"),
@@ -115,6 +116,7 @@ CHAINS: list[ChainSpec] = [
     ChainSpec("plasma", "plasma"),
     ChainSpec("polygon", "polygon"),
     ChainSpec("solana", "solana"),
+    ChainSpec("tempo", "tempo"),
     ChainSpec("ton", "ton"),
     ChainSpec("tron", "tron"),
     ChainSpec("x_layer", "x-layer"),

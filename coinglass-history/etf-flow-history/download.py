@@ -1,7 +1,7 @@
 """Download Coinglass /api/etf/{market}/flow-history (per-market net flow time series).
 
 Endpoint:  GET /api/etf/{market}/flow-history?range=all
-Markets:   bitcoin, ethereum, solana, xrp
+Markets:   bitcoin, ethereum, solana, xrp, hype
 Cache:     cache/<market>.csv  (OHLC schema; flow_usd / per-ETF flows in extra_json)
 """
 from __future__ import annotations

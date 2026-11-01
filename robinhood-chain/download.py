@@ -4,23 +4,27 @@
 dex_volume.sql),直接读 robinhood.transactions 与 dex.trades。其余仍用 adam_tehc
 的公开 query。
 
-刷新口径:
+告警依赖(看板 detectRobinhoodWowSlowdown / Lark 超阈值推送):
+  daily_transactions、active_wallets、dex_volume 三条必须日更进 output/json 再
+  copy_to_dashboard。缺文件或最新完整日超出新鲜窗口则告警静默不发。
+
+刷新口径(为卡住 Dune 14 天 2500 credits 预算而降频):
   自有的两条窄查询只返回最近两个完整 UTC 日,缓存超过 20 小时就自己执行,再按 day
   把新日期合并进本地历史。2026-09-23 之后、上传表停更造成的空档在首次执行时补过。
-  别人的 query 默认 max_age_hours=48:平时纯读缓存;只有对方停了调度、缓存放到两天以上,
-  才由我们自己触发一次执行。
+    别人的贵查询默认 max_age_hours=168(7 天):平时纯读缓存;只有对方停调度很久才自跑。
+  launchpad_activity 单独 336h(14 天)——单次约 300~517 credits,不能按两三日节奏自跑。
 
 关于 launchpad_activity:
   全历史 query 8024180 一次大约 315 credits,已禁止自动执行。
-  窄查询 8884658 只返回最近两个完整 UTC 日,但实测执行大约 517 credits
-  (依赖的子查询仍会重算)。因此单独把刷新间隔放到 72 小时,而不是退回全历史查询。
+  窄查询 8884658 只返回最近两个完整 UTC 日,但实测执行大约 300~517 credits
+  (依赖的子查询仍会重算)。因此刷新间隔放到 14 天,而不是退回全历史查询。
   更早的日期按 day 合并留在本地文件里。volume_usd 的 bullmarkets 异常值仍由前端剔除。
 
 Outputs:
   output/json/<name>.json           结构见 _dune.build_payload
 
 Usage:
-  python download.py                      # 缓存超过 48h 才触发执行
+  python download.py                      # 自有窄查询超 20h;贵查询超 7~14 天才执行
   python download.py --dry-run            # 只看 7 条 query 的缓存新鲜度
   python download.py --only rwa_aum       # 只拉一条
   python download.py --no-execute         # 只读缓存(不花执行额度)
@@ -131,7 +135,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--only", default=None, choices=sorted(QUERIES.keys()), help="只拉某一个 query(按 name)")
     parser.add_argument("--out", default=str(JSON_DIR), help="输出目录(默认 output/json)")
-    add_common_args(parser, default_max_age_hours=48.0)
+    add_common_args(parser, default_max_age_hours=168.0)
     args = parser.parse_args()
 
     try:
@@ -147,9 +151,13 @@ def main() -> None:
                 "dex_volume": "day",
             },
             max_age_overrides={
-                "launchpad_activity": 72.0,
+                "launchpad_activity": 336.0,  # ~14d; 单次 300~517 credits
                 "daily_transactions": 20.0,
                 "dex_volume": 20.0,
+                "active_wallets": 168.0,  # ~7d; 单次 ~165 credits
+                "launchpad_new_tokens": 168.0,
+                "rwa_aum": 168.0,  # ~7d; 单次 ~138 credits
+                "rwa_volume": 168.0,
             },
         )
     finally:

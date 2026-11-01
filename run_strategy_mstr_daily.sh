@@ -25,12 +25,17 @@ rc=0
 
   echo "[$(ts)] 1/2 下载 KPI(增量,不重拉全历史)..."
   if $VENV strategy-mstr/1.download.py; then
-    echo "[$(ts)] 2/2 镜像 json → dashboard ..."
+    echo "[$(ts)] 2/3 镜像 json → dashboard ..."
     $VENV copy_to_dashboard.py --dest /root/dashboard/public/json --only strategy-mstr --force \
       || { echo "[$(ts)]   [ERROR] copy_to_dashboard 失败"; rc=1; }
+    # 仅最新快照持仓跳变（|Δ|≥STRATEGY_MSTR_HOLDINGS_DELTA_BTC，默认500）+ 新高【特殊警报】；
+    # 不做每日增持流水，不回扫历史。8-K / 均价成本未接。
+    echo "[$(ts)] 3/3 flash → Lark（仅最新持仓跳变，新闻体）..."
+    $VENV strategy-mstr/flash.py --push --no-daily \
+      || echo "[$(ts)]   [WARN] strategy-mstr flash 失败,继续"
   else
     # 下载失败就不要镜像:前端继续读昨天的 json,好过被半截数据覆盖。
-    echo "[$(ts)]   [ERROR] 1.download.py 失败,跳过镜像"
+    echo "[$(ts)]   [ERROR] 1.download.py 失败,跳过镜像与 flash"
     rc=1
   fi
 

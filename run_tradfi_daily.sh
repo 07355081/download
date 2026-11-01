@@ -24,20 +24,23 @@ fi
 
 {
   echo "==================== [$(ts)] 每日 tradfi 开始 ===================="
-  echo "[$(ts)] 1/5 下载 price(1d,4h,1h)+ OI + funding ..."
+  echo "[$(ts)] 1/6 下载 price(1d,4h,1h)+ OI + funding ..."
   $VENV tradfi/download.py --intervals 1d,4h,1h --workers 6
-  echo "[$(ts)] 2/5 派生 parquet(price/oi/funding)→ /root/outbox ..."
+  echo "[$(ts)] 2/6 派生 parquet(price/oi/funding)→ /root/outbox ..."
   $VENV tradfi/to_parquet.py
-  echo "[$(ts)] 3/5 镜像 price json → dashboard(供网页,best-effort) ..."
+  echo "[$(ts)] 3/6 镜像 price json → dashboard(供网页,best-effort) ..."
   $VENV copy_to_dashboard.py --dest /root/dashboard/public/json \
     || echo "[$(ts)] copy_to_dashboard 失败(不影响下载/parquet 产出)"
-  echo "[$(ts)] 4/5 刷新目录索引与数据契约(_indexes/ + _manifest.json)..."
+  echo "[$(ts)] 3b 股票永续成交 → Lark（仅新高/首次过关/分位/大变动，不回扫）..."
+  $VENV tradfi/stock_perp_flash.py --push \
+    || echo "[$(ts)] stock_perp_flash 失败(不影响下载)"
+  echo "[$(ts)] 4/6 刷新目录索引与数据契约(_indexes/ + _manifest.json)..."
   $VENV gen_dashboard_meta.py --dest /root/dashboard/public/json \
     || echo "[$(ts)] gen_dashboard_meta 失败(不影响数据本身)"
   # 新鲜度闸门:当天最后一个管道收尾时按数据集阈值检查 manifest, 超阈值推飞书。
   # 不接这一步, 单个数据集静默停更上百天也不会有人发现(cex 停 10 天/treasuries 停 45 天
   # /etf-premium 停 105 天都是这么积累出来的)。已知长期停更项在脚本内单列阈值避免刷屏。
-  echo "[$(ts)] 5/5 检查数据新鲜度(超阈值推飞书)..."
+  echo "[$(ts)] 5/6 检查数据新鲜度(超阈值推飞书)..."
   $VENV check_manifest_freshness.py \
     || echo "[$(ts)] check_manifest_freshness 失败(不影响数据本身)"
   echo "[$(ts)] 完成"

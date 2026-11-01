@@ -644,6 +644,17 @@ def main() -> None:
     write_json(futures_monthly_json, futures_monthly_payload)
     write_json(asset_json, asset_payload)
     write_json(ratio_json, ratio_payload)
+    quarterly_json = OUTPUT_JSON_DIR / "cex_exchange_quarterly_futures_volume_usd.json"
+    quarterly_rows = 0
+    try:
+        from write_quarterly import write_quarterly_file
+
+        write_quarterly_file(spot_monthly_json, futures_monthly_json, quarterly_json)
+        quarterly_doc = json.loads(quarterly_json.read_text(encoding="utf-8"))
+        quarterly_rows = sum(len(block.get("months") or []) for block in quarterly_doc.get("series") or [])
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError, TypeError) as exc:
+        quarterly_json = None
+        print(f"[WARN] quarterly volume json skipped: {exc}")
 
     index_datasets: list[dict[str, Any]] = [
         {
@@ -670,6 +681,18 @@ def main() -> None:
             "source_csv": merged_source_label(pipeline_xlsx.name),
             "rows": futures_monthly_payload["data"]["row_count"],
         },
+        *(
+            [
+                {
+                    "metric": "cex_exchange_quarterly_futures_volume_usd",
+                    "file": quarterly_json.name,
+                    "source_csv": merged_source_label(pipeline_xlsx.name),
+                    "rows": quarterly_rows,
+                }
+            ]
+            if quarterly_json is not None
+            else []
+        ),
         {
             "metric": "cex_exchange_daily_assets_usd",
             "file": asset_json.name,

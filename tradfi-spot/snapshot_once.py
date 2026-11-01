@@ -9,6 +9,7 @@ import _paths as P
 from _cleanup import purge_legacy_history
 from _guard import SpotLock, preflight
 from cex_tickers import fetch_lasts, load_focus_instruments
+from session_moves import write_session_moves
 from yahoo import fetch_quotes
 
 sys.path.insert(0, str(P.PARENT / "tradfi"))
@@ -42,6 +43,10 @@ def main() -> int:
         http = Http(min_interval_s=0.15, timeout=25, retries=2)
 
         t0 = time.time()
+        try:
+            write_session_moves(http)
+        except Exception as exc:
+            print(f"session-moves failed: {exc}", flush=True)
         quotes = fetch_quotes(http, yahoo_list)
         print(f"yahoo quotes={len(quotes)}/{len(yahoo_list)}", flush=True)
 

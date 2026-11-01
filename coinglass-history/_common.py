@@ -670,6 +670,9 @@ def extract_ohlc_rows(payload_data: Any) -> list[dict[str, Any]]:
                     extra[k] = f
                 elif isinstance(v, str) and v:
                     extra[k] = v
+                # Keep nested payloads (e.g. ETF flow-history `etf_flows` per ticker).
+                elif isinstance(v, (list, dict)):
+                    extra[k] = v
         row["extra_json"] = json.dumps(extra, ensure_ascii=False, separators=(",", ":")) if extra else ""
         out.append(row)
     return out
@@ -992,7 +995,7 @@ def per_symbol_csv_to_json(cache_dir: Path, json_out_dir: Path, args: Any) -> No
 
 # ─────────────────────────── ETF helpers ───────────────────────────
 
-ETF_MARKETS = ("bitcoin", "ethereum", "solana", "xrp")
+ETF_MARKETS = ("bitcoin", "ethereum", "solana", "xrp", "hype")
 
 # /api/etf/{market}/list — Coinglass v4 仅提供 bitcoin、ethereum（solana/xrp 返回 404）
 ETF_LIST_MARKETS = ("bitcoin", "ethereum")

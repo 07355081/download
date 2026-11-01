@@ -39,8 +39,9 @@ API_BASE = "https://api.dune.com/api/v1"
 AUTO_EXECUTE_BLOCKLIST = frozenset({8024180, 8260046})
 
 # 写死的账户级上限。不许改成环境变量,不许另加跳过开关。
-# --force-execute 也要先过这里。近 14 天滚动不得超过 2500,近 30 天滚动不得超过 4000。
-CREDIT_LIMIT_14D = 2500.0
+# --force-execute 也要先过这里。套餐 datapoint 约 2500/周期;本地 14 天顶刻意留约 400 缓冲,
+# 避免打满后连 1 credit 的窄查询也被 Dune 402,并给未测 query 的预占留余地。
+CREDIT_LIMIT_14D = 2100.0
 CREDIT_LIMIT_30D = 4000.0
 # 没跑过、账本里没有实测的 query,按这个数预占额度。宁可拦住,也不许先跑出一笔未知大额。
 UNMEASURED_QUERY_CREDITS = 500.0
@@ -51,6 +52,7 @@ KNOWN_QUERY_CREDIT_FLOOR = {
     8073404: 138.0,  # robinhood rwa_aum
     8024180: 500.0,  # 全历史,禁止自动执行
     8260046: 500.0,  # UNI 全历史,禁止自动执行
+    8958296: 1.0,  # Coinbase Base 股票代币 DEX 日成交
 }
 LEDGER_PATH = Path(__file__).resolve().parent / ".dune-credit-ledger.json"
 _LEDGER_LOCK = LEDGER_PATH.with_suffix(".lock")
@@ -717,6 +719,17 @@ def run_module(
                     payload["data"] = merge_rows_by_date(old_rows, payload["data"], date_key)
                     payload["row_count"] = len(payload["data"])
                     payload["merged_history"] = True
+            # 上游偶发返回 0 行时不要盖掉本地有数据的快照
+            if payload.get("row_count") == 0 and dest.exists():
+                try:
+                    previous = json.loads(dest.read_text(encoding="utf-8"))
+                    prev_n = previous.get("row_count") if isinstance(previous, dict) else None
+                except (OSError, json.JSONDecodeError):
+                    prev_n = None
+                if isinstance(prev_n, int) and prev_n > 0:
+                    print(f"    SKIP write: 新结果 0 行，保留本地 {prev_n} 行")
+                    ok += 1
+                    continue
             write_json(dest, payload)
             print(f"    rows={payload['row_count']:<6} {time.time() - started:.1f}s")
             ok += 1

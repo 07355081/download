@@ -14,7 +14,7 @@ export MSYS2_ARG_CONV_EXCL='*'
 
 SRC="root@47.74.6.207:/root/dashboard/public/json/"
 DST="/c/code/data-dashboard/public/json/"
-SSH_OPTS="-i /c/Users/Joeyw/.ssh/data-dashboard-prod -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes"
+SSH_OPTS="-i $HOME/.ssh/data-dashboard-prod -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes"
 LOG="/tmp/rsync_from_vps.log"
 
 # VPS 上暂缓/未搬迁/空的模块 -> 本机保留自己的权威版本, 不从 VPS 拉(避免旧数据覆盖)。

@@ -60,6 +60,19 @@ EXEMPT: dict[str, str] = {
 }
 
 
+def _ensure_lark_copy() -> None:
+    import sys as _sys
+    from pathlib import Path as _Path
+    folder = _Path(__file__).resolve().parent
+    while folder != folder.parent and not (folder / "lark_copy.py").is_file():
+        folder = folder.parent
+    if str(folder) not in _sys.path:
+        _sys.path.insert(0, str(folder))
+
+
+_ensure_lark_copy()
+from lark_copy import as_news
+
 def load_env(path: Path) -> dict[str, str]:
     """读取 .env 风格文件。只取本脚本需要的键，不污染 os.environ。"""
     out: dict[str, str] = {}
@@ -83,6 +96,7 @@ def gen_lark_sign(secret: str, timestamp: str) -> str:
 
 
 def send_lark_text(webhook: str, secret: str | None, text: str) -> None:
+    text = as_news(text)
     payload: dict[str, object] = {"msg_type": "text", "content": {"text": text}}
     if secret:
         ts = str(int(datetime.now().timestamp()))

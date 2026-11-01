@@ -519,6 +519,35 @@ def build_pons() -> dict:
     )
 
 
+def hype_closes() -> dict[str, float]:
+    """HYPE 日收盘。CoinGecko 图表失败时市值图会整条空白，这里用交易所 K 线补价格。"""
+    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    start_ms = end_ms - 120 * 86400 * 1000
+    try:
+        payload = http_json(
+            HL_INFO_URL,
+            method="POST",
+            payload={
+                "type": "candleSnapshot",
+                "req": {"coin": "HYPE", "interval": "1d", "startTime": start_ms, "endTime": end_ms},
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"    [WARN] hype candles: {exc}", file=sys.stderr)
+        return {}
+    if not isinstance(payload, list):
+        return {}
+    out: dict[str, float] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        day = ms_to_day(row.get("t"))
+        close = num(row.get("c"))
+        if day and close is not None and close > 0:
+            out[day] = close
+    return out
+
+
 def hype_balance() -> float:
     payload = http_json(
         HL_INFO_URL,
@@ -577,6 +606,9 @@ def build_hype(gecko: Gecko, dest: Path) -> dict:
         "cumulative_burned": balance,
     }
     chart = gecko.chart(GECKO_IDS["hype"])
+    closes = hype_closes()
+    spot = gecko.spot(GECKO_IDS["hype"])
+    circulating_now = spot.get("circulating") if isinstance(spot.get("circulating"), float) else None
     rows: list[dict] = []
     days = sorted(by_day)
     previous_cumulative: float | None = None
@@ -585,7 +617,14 @@ def build_hype(gecko: Gecko, dest: Path) -> dict:
         burned = None
         if cumulative is not None and previous_cumulative is not None:
             burned = cumulative - previous_cumulative
-        price, mcap, circulating = quote(chart, day)
+        price, mcap, circulating = quote(chart, day, closes)
+        if price is None:
+            price = num(by_day[day].get("price_usd"))
+        if mcap is None:
+            mcap = num(by_day[day].get("market_cap_usd"))
+        if mcap is None and price and circulating_now and circulating_now > 0:
+            mcap = price * circulating_now
+            circulating = circulating_now
         row = {
             "day": day,
             "burned_tokens": burned,

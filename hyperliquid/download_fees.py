@@ -17,7 +17,7 @@ Three outputs, deliberately kept as three files so each carries one source:
   与 download.py 一样走 _dune.fetch_query，缓存超过 --max-age-hours 才自己触发一次执行。
 
 Usage:
-  python download_fees.py                 # 缓存超过 20h 才触发执行
+  python download_fees.py                 # 缓存超过 168h 才考虑自执行(日常 misc 传 --no-execute)
   python download_fees.py --dry-run       # 只看两个 Dune query 的缓存新鲜度
   python download_fees.py --no-execute    # 只读缓存,不花执行额度
   python download_fees.py --only hl_fees_daily
@@ -203,7 +203,8 @@ def main() -> None:
     )
     parser.add_argument("--only", default=None, choices=sorted(BUILDERS.keys()), help="只跑一个输出")
     parser.add_argument("--out", default=str(JSON_DIR), help="输出目录(默认 output/json)")
-    add_common_args(parser, default_max_age_hours=20.0)
+    # 与 HIP 小表一致：未测清成本前默认 7 天才考虑自执行；日常 misc 传 --no-execute。
+    add_common_args(parser, default_max_age_hours=168.0)
     args = parser.parse_args()
 
     api = DuneApi(resolve_api_key(args.api_key, ROOT_DIR))

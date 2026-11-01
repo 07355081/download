@@ -18,6 +18,9 @@ Caveats:
   - DefiLlama CEX balances are address-label / custody heuristics, not PoR and not
     equal to customer liabilities.
   - Coverage and labeling differ by venue.
+  - A successful fetch overwrites every dated cell it returns, so a later DefiLlama
+    revision of an old day replaces the stored number. A failed exchange is left
+    untouched. The in-progress UTC day is not written.
 """
 from __future__ import annotations
 
@@ -319,22 +322,42 @@ def write_wide_csv(by_date: dict[str, dict[str, float]], exchanges: list[str], p
             w.writerow(row)
 
 
-def filter_rows_for_incremental(
+def rows_to_overwrite(
     rows: list[dict[str, Any]],
     *,
     exchange_name: str,
-    last_date: date | None,
     existing_exchange_set: set[str],
+    today: date | None = None,
 ) -> list[dict[str, Any]]:
-    is_new_exchange_column = exchange_name not in existing_exchange_set
-    if last_date is not None and not is_new_exchange_column:
-        rows = [
-            r for r in rows
-            if datetime.strptime(r["date"], "%Y-%m-%d").date() > last_date
-        ]
-    if is_new_exchange_column and rows:
-        print(f"  [{exchange_name}] new column detected, backfilling full history ({len(rows)} rows)")
-    return rows
+    """Apply a successful fetch onto stored cells, including revisions of old days.
+
+    Missing or non-numeric values are skipped, so an empty cell is never written as 0.
+    The in-progress UTC day is skipped because that total is still moving.
+    """
+    open_day = today if today is not None else datetime.now(timezone.utc).date()
+    kept: list[dict[str, Any]] = []
+    dropped_open = 0
+    for row in rows:
+        raw_day = row.get("date")
+        raw_value = row.get("value")
+        if not raw_day or raw_value is None or raw_value == "":
+            continue
+        try:
+            day = datetime.strptime(str(raw_day), "%Y-%m-%d").date()
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if value != value:
+            continue
+        if day >= open_day:
+            dropped_open += 1
+            continue
+        kept.append({**row, "date": day.isoformat(), "value": value})
+    if exchange_name not in existing_exchange_set and kept:
+        print(f"  [{exchange_name}] new column detected, backfilling full history ({len(kept)} rows)")
+    if dropped_open:
+        print(f"  [{exchange_name}] skip in-progress UTC day rows={dropped_open}")
+    return kept
 
 
 def merge_rows_into_wide(
@@ -374,7 +397,7 @@ def update_wide_csv(
     ordered_exchanges = sorted(set(existing_exchanges))
     write_wide_csv(existing_by_date, ordered_exchanges, path)
     print(f"[{label}] Saved wide CSV: {path}")
-    print(f"[{label}] Total dates: {len(existing_by_date)}, added rows: {len(new_rows)}")
+    print(f"[{label}] Total dates: {len(existing_by_date)}, applied rows: {len(new_rows)}")
 
 
 def main() -> None:
@@ -407,11 +430,10 @@ def main() -> None:
 
         parts: list[str] = []
         for label, _path in targets:
-            _by_date, exchanges, last = state[label]
-            kept = filter_rows_for_incremental(
+            _by_date, exchanges, _last = state[label]
+            kept = rows_to_overwrite(
                 series[label],
                 exchange_name=name,
-                last_date=last,
                 existing_exchange_set=set(exchanges),
             )
             new_rows[label].extend(kept)

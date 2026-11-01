@@ -1,6 +1,7 @@
 """Download Hyperliquid metrics into local JSON files.
 
-HIP-3 / HIP-4 的小表仍读 ASXN 的 Dune 缓存，超过 36h 才自己执行。
+HIP-3 / HIP-4 的小表仍读 ASXN 的 Dune 缓存；为省额度，超过 168h(7 天)才自己执行。
+日常 misc 管道会对 Dune 步传 --no-execute，只靠对方调度 + 官方接口按币种更新。
 按币种的大表 hip3_by_symbol 改走 Hyperliquid 官方接口，不再下载 Dune 8077453。
 
 Outputs (one file per query):
@@ -50,8 +51,8 @@ def main() -> None:
         help="只拉某一个输出(按 name)",
     )
     parser.add_argument("--out", default=str(JSON_DIR), help="输出目录(默认 output/json)")
-    # ASXN 日更大约落后 1 天。36h 内复用缓存；超过才自己执行，避免 owner 停调度后静默冻住。
-    add_common_args(parser, default_max_age_hours=36.0)
+    # 额度紧张时不要按 36h 自跑未测成本的 ASXN 表；7 天内复用缓存，日常靠 --no-execute。
+    add_common_args(parser, default_max_age_hours=168.0)
     args = parser.parse_args()
 
     out_dir = Path(args.out)

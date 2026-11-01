@@ -53,7 +53,7 @@ MAX_TREASURY_PAGES = 10
 # Demo API allows up to 365; "max" requires Analyst+ plan.
 DEFAULT_CHART_DAYS = "365"
 DASHBOARD_CHART_DAYS = ("365", "180", "90", "30")
-SUPPORTED_COINS = ("bitcoin", "ethereum", "solana", "binancecoin", "ripple")
+SUPPORTED_COINS = ("bitcoin", "ethereum", "solana", "binancecoin", "ripple", "hyperliquid")
 
 # Mirror lib/coingecko-treasuries.ts constants
 DETAIL_ENRICH_TARGET_COUNT = 8
@@ -102,8 +102,14 @@ def entity_lookup_keys(name: str, symbol: str | None, country: str | None) -> Li
 def resolve_key(cli_key: str | None) -> str | None:
     if cli_key:
         return cli_key.strip() or None
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if env_path.exists():
+    root = Path(__file__).resolve().parent.parent
+    for env_path in (
+        root / ".env",
+        Path("/root/dashboard/.env.live"),
+        root.parent / "data-dashboard" / ".env.live",
+    ):
+        if not env_path.exists():
+            continue
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -249,13 +255,18 @@ def fetch_collection(
     market_cap_dom = 0.0
 
     for page in range(1, MAX_TREASURY_PAGES + 1):
-        payload = http_get_json(
-            f"/{collection}/public_treasury/{coin_id}",
-            {"per_page": ENTITY_PAGE_SIZE, "page": page, "order": "total_holdings_usd_desc"},
-            api_key,
-            retries,
-            sleep_s,
-        )
+        try:
+            payload = http_get_json(
+                f"/{collection}/public_treasury/{coin_id}",
+                {"per_page": ENTITY_PAGE_SIZE, "page": page, "order": "total_holdings_usd_desc"},
+                api_key,
+                retries,
+                sleep_s,
+            )
+        except RuntimeError as exc:
+            if "HTTP 404" in str(exc) and page == 1:
+                return 0.0, 0.0, 0.0, []
+            raise
         time.sleep(sleep_s)
         if not isinstance(payload, dict):
             break

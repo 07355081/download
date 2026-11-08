@@ -101,6 +101,7 @@ CATEGORY_OVERRIDES = {
     "deribit_spot": "现货",
     "hyperliquid": "合约",
     "coinbase_international_derivatives": "合约",
+    "coinbase_international": "合约",
     "aevo": "合约",
     "dydx_chain": "合约",
     "hyperliquid-spot": "现货",
@@ -145,6 +146,7 @@ FUTURES_NAME_MAP = {
     "mxc_futures": "MEXC",
     "okex_swap": "OKX",
     "coinbase_international_derivatives": "Coinbase",
+    "coinbase_international": "Coinbase",
     "kraken_futures": "Kraken",
     "hyperliquid": "Hyperliquid",
 }
@@ -406,8 +408,14 @@ def smooth_volume_anomalies_wide(
         finite_pos_mask = series.notna() & (series > 0)
         if not finite_pos_mask.any():
             continue
-        first_valid_idx = int(np.argmax(finite_pos_mask.to_numpy()))
-        eligible = pd.Series(np.arange(n) >= first_valid_idx, index=series.index)
+        pos_idx = np.flatnonzero(finite_pos_mask.to_numpy())
+        first_valid_idx = int(pos_idx[0])
+        last_valid_idx = int(pos_idx[-1])
+        # 只修补「首末有效点之间」的空洞；末尾之后缺数视为源已停更，不外推填月。
+        eligible = pd.Series(
+            (np.arange(n) >= first_valid_idx) & (np.arange(n) <= last_valid_idx),
+            index=series.index,
+        )
 
         corrected = series.copy()
         for _ in range(max_passes):
@@ -577,10 +585,18 @@ def monthly_summary(
 
     month_period = tmp[date_column].dt.to_period("M")
     tmp = tmp.loc[month_period.isin(complete_months)].copy()
-    grouped = tmp.groupby(tmp[date_column].dt.to_period("M"))[value_cols].sum(min_count=1)
+    numeric = tmp[value_cols].apply(pd.to_numeric, errors="coerce")
+    grouped = numeric.groupby(tmp[date_column].dt.to_period("M")).sum(min_count=1)
+    # Per-exchange: require enough non-null positive days, else NaN (avoid partial-month undercount).
+    valid_day = numeric.gt(0)
+    per_ex_days = valid_day.groupby(tmp[date_column].dt.to_period("M")).sum()
+    grouped = grouped.where(per_ex_days >= min_valid_days)
     skipped = sorted({str(m) for m in day_counts.index} - {str(m) for m in complete_months})
     if skipped:
         print(f"  月度跳过（有效日 < {min_valid_days}）: {', '.join(skipped)}")
+    nulled = int((per_ex_days < min_valid_days).sum().sum()) if len(per_ex_days) else 0
+    if nulled:
+        print(f"  月度单所置空（该所有效日 < {min_valid_days}）: {nulled} 格")
 
     grouped.index = grouped.index.astype(str)
     out = grouped.T

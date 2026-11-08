@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""CoinGecko Privacy Coins 板块快照（免费/Demo key）。
+"""CoinGecko 隐私板块快照（免费/Demo key）。
 
+主分类 privacy-coins；另拉 privacy-infrastructure，并点名 NEAR/RAIL（7d/30d）。
 输出 output/json/privacy_coins.json
 不占 Dune；非 Glassnode API。
 """
@@ -8,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,6 +21,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 OUT = HERE / "output" / "json" / "privacy_coins.json"
 CATEGORY = "privacy-coins"
+INFRA_CATEGORY = "privacy-infrastructure"
+SPOTLIGHT = ("NEAR", "RAIL")
 UA = "wublock-privacy-coins/1.0"
 
 ENV_CANDIDATES = [
@@ -149,30 +153,63 @@ def seed_prev_day(rows: list[dict[str, Any]], day: str, mcap: float, ch24: float
     return merge_day(rows, prev_day, {"time": prev_day, "market_cap": prev_mcap})
 
 
-def main() -> int:
-    env = load_env()
-    cats = cg_get("/coins/categories", {}, env)
-    cat = next(
-        (c for c in cats if isinstance(c, dict) and str(c.get("id") or "") == CATEGORY),
+def pick_cat(cats: Any, cat_id: str) -> dict[str, Any] | None:
+    if not isinstance(cats, list):
+        return None
+    return next(
+        (c for c in cats if isinstance(c, dict) and str(c.get("id") or "") == cat_id),
         None,
     )
-    if not cat:
-        raise SystemExit(f"categories 里没有 {CATEGORY}")
 
-    markets = cg_get(
+
+def fetch_markets(env: dict[str, str], cat_id: str) -> list[dict[str, Any]]:
+    rows = cg_get(
         "/coins/markets",
         {
             "vs_currency": "usd",
-            "category": CATEGORY,
+            "category": cat_id,
             "order": "market_cap_desc",
             "per_page": "100",
             "page": "1",
-            "price_change_percentage": "30d,1y",
+            "price_change_percentage": "7d,30d,1y",
         },
         env,
     )
-    if not isinstance(markets, list) or not markets:
+    return rows if isinstance(rows, list) else []
+
+
+def coin_brief(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    try:
+        mcap = float(row.get("market_cap") or 0)
+    except (TypeError, ValueError):
+        mcap = 0.0
+    return {
+        "id": row.get("id"),
+        "symbol": str(row.get("symbol") or "").upper(),
+        "name": row.get("name"),
+        "market_cap_usd": mcap,
+        "market_cap_rank": row.get("market_cap_rank"),
+        "price_change_7d_pct": row.get("price_change_percentage_7d_in_currency"),
+        "price_change_30d_pct": row.get("price_change_percentage_30d_in_currency"),
+        "price_change_1y_pct": row.get("price_change_percentage_1y_in_currency"),
+    }
+
+
+def main() -> int:
+    env = load_env()
+    cats = cg_get("/coins/categories", {}, env)
+    cat = pick_cat(cats, CATEGORY)
+    if not cat:
+        raise SystemExit(f"categories 里没有 {CATEGORY}")
+    infra_cat = pick_cat(cats, INFRA_CATEGORY)
+
+    markets = fetch_markets(env, CATEGORY)
+    if not markets:
         raise SystemExit("markets 空")
+    time.sleep(0.35)
+    infra_markets = fetch_markets(env, INFRA_CATEGORY)
 
     btc = cg_get(
         "/coins/bitcoin",
@@ -211,10 +248,26 @@ def main() -> int:
         for x in markets[:8]
         if isinstance(x.get("market_cap"), (int, float))
     ]
+
+    # NEAR/RAIL：优先基础设施分类，缺失再扫宽口径 privacy 前 100（本模块只扫 infra）
+    by_sym = {str(x.get("symbol") or "").upper(): x for x in infra_markets}
+    for x in markets:
+        sym = str(x.get("symbol") or "").upper()
+        if sym in SPOTLIGHT and sym not in by_sym:
+            by_sym[sym] = x
+    spotlight = [coin_brief(by_sym.get(sym)) for sym in SPOTLIGHT]
+    spotlight = [x for x in spotlight if x]
+
+    infra_total = None
+    if infra_cat and isinstance(infra_cat.get("market_cap"), (int, float)):
+        infra_total = float(infra_cat["market_cap"])
+    elif infra_markets:
+        infra_total = sum(float(x.get("market_cap") or 0) for x in infra_markets)
+
     payload = {
         "code": "0",
         "msg": "success",
-        "source": "CoinGecko category=privacy-coins",
+        "source": "CoinGecko privacy-coins + privacy-infrastructure",
         "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "category": {
             "id": CATEGORY,
@@ -222,6 +275,16 @@ def main() -> int:
             "market_cap_usd": total,
             "market_cap_change_24h_pct": cat.get("market_cap_change_24h"),
             "volume_24h_usd": cat.get("volume_24h"),
+        },
+        "infrastructure": {
+            "id": INFRA_CATEGORY,
+            "name": (infra_cat or {}).get("name") or "Privacy Infrastructure",
+            "market_cap_usd": infra_total,
+            "market_cap_change_24h_pct": (infra_cat or {}).get("market_cap_change_24h"),
+            "weighted_30d_pct": weighted_pct(
+                infra_markets, "price_change_percentage_30d_in_currency"
+            ),
+            "coins_n": len(infra_markets),
         },
         "btc": {
             "ath_usd": (md.get("ath") or {}).get("usd"),
@@ -237,9 +300,11 @@ def main() -> int:
             "market_cap_usd": zec_mcap,
             "market_cap_rank": zec.get("market_cap_rank"),
             "share_pct": (zec_mcap / total * 100.0) if total > 0 else None,
+            "price_change_7d_pct": zec.get("price_change_percentage_7d_in_currency"),
             "price_change_30d_pct": zec.get("price_change_percentage_30d_in_currency"),
             "price_change_1y_pct": zec.get("price_change_percentage_1y_in_currency"),
         },
+        "spotlight": spotlight,
         "sector": {
             "weighted_30d_pct": weighted_pct(markets, "price_change_percentage_30d_in_currency"),
             "weighted_1y_pct": weighted_pct(markets, "price_change_percentage_1y_in_currency"),
@@ -264,9 +329,9 @@ def main() -> int:
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(OUT)
     print(
-        f"wrote {OUT} mcap={total/1e8:.2f}亿 zec_share="
-        f"{payload['zec']['share_pct'] if payload['zec'] else None} "
-        f"btc_ath_chg={payload['btc']['ath_change_pct']} days={len(data)} top={len(latest_top)}"
+        f"wrote {OUT} mcap={total/1e8:.2f}亿 infra={None if infra_total is None else round(infra_total/1e8,2)}亿 "
+        f"zec_share={payload['zec']['share_pct'] if payload['zec'] else None} "
+        f"spotlight={[x['symbol'] for x in spotlight]} days={len(data)}"
     )
     return 0
 

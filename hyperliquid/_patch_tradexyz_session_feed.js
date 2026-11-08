@@ -1,0 +1,66 @@
+/**
+ * Hot-patch running dashboard image: register tradexyz-session in Lark feeds catalog.
+ */
+const fs = require("fs");
+const { execSync } = require("child_process");
+
+const marker = "hl-hip3-markets/hl_hip3_markets.json";
+const slug = "tradexyz-session";
+const entry =
+  '{slug:"tradexyz-session",titleZh:"TradeXYZ 纽交所时段外成交",titleEn:"TradeXYZ outside NYSE hours",jsonPath:"hyperliquid/tradexyz_session.json",section:"chain"}';
+
+function grepFiles(needle, roots) {
+  const cmd = `grep -r -l -F ${JSON.stringify(needle)} ${roots.join(" ")} 2>/dev/null || true`;
+  return execSync(cmd, { encoding: "utf8" })
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+const files = grepFiles(marker, ["/app/.next"]);
+const patched = [];
+for (const file of files) {
+  let text = fs.readFileSync(file, "utf8");
+  if (text.includes(`slug:"${slug}"`) || text.includes(`"slug":"${slug}"`)) {
+    console.log("already", file);
+    continue;
+  }
+  const at = text.indexOf(marker);
+  if (at < 0) {
+    console.log("no-marker", file);
+    continue;
+  }
+  const sectionAt = text.indexOf('section:"chain"', at);
+  if (sectionAt < 0) {
+    console.log("no-section", file);
+    continue;
+  }
+  const end = text.indexOf("}", sectionAt);
+  if (end < 0) {
+    console.log("no-end", file);
+    continue;
+  }
+  text = text.slice(0, end + 1) + "," + entry + text.slice(end + 1);
+  fs.writeFileSync(file, text);
+  patched.push(file);
+  console.log("patched-feed", file);
+}
+
+for (const file of patched) {
+  if (!file.includes("/static/chunks/") || !file.endsWith(".js")) continue;
+  const base = file.slice(0, -3);
+  const dst = `${base}-xyzsess.js`;
+  fs.copyFileSync(file, dst);
+  const name = file.split("/").pop();
+  const next = dst.split("/").pop();
+  const refs = grepFiles(name, ["/app/.next"]);
+  for (const ref of refs) {
+    if (ref === dst) continue;
+    const body = fs.readFileSync(ref, "utf8");
+    if (!body.includes(name)) continue;
+    fs.writeFileSync(ref, body.split(name).join(next));
+    console.log("rewritten", ref, "->", next);
+  }
+}
+
+console.log("done", { feedPatched: patched.length });

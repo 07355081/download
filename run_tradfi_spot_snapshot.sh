@@ -24,5 +24,7 @@ fi
   safe-run timeout 180 $VENV tradfi-spot/snapshot_once.py --no-lock
   $VENV copy_to_dashboard.py --dest "$DEST" --only tradfi-spot-live --force \
     || echo "[$(ts)] copy live 失败(不影响本地产出)"
+  $VENV tradfi-spot/aapl_basis_flash.py --push \
+    || echo "[$(ts)] aapl_basis_flash 失败(不影响快照)"
   echo "[$(ts)] 完成"
 } >> "$LOG" 2>&1

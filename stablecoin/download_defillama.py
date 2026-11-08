@@ -134,6 +134,7 @@ GLOBAL_COINS: list[CoinSpec] = [
     CoinSpec("fdusd", "119", "FDUSD"),
     CoinSpec("usdd", "14", "USDD"),
     CoinSpec("tusd", "7", "TUSD"),
+    CoinSpec("usat", "343", "USAT"),  # Tether USA₮ / usat.io
 ]
 
 # Fetched only to build all_usds/dai (Maker DAI + Sky USDS); not written as separate columns.

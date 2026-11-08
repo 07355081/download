@@ -36,6 +36,7 @@ SUMMARY_URL = "https://status.polymarket.com/summary.json"
 COMPONENTS_URL = "https://status.polymarket.com/v2/components.json"
 RSS_URL = "https://status.polymarket.com/history.rss"
 PAGE_URL = "https://status.polymarket.com/"
+DASHBOARD = "https://data.wublock123.com/dashboard/lark-feeds/polymarket-status"
 UA = "Mozilla/5.0 (compatible; dashboard-data/polymarket-status)"
 TZ_CN = timezone(timedelta(hours=8))
 ENV_CANDIDATES = [
@@ -223,6 +224,21 @@ def normalize_events(summary: dict[str, Any]) -> list[dict[str, Any]]:
     return events
 
 
+def component_rows(components: list[dict[str, Any]]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for row in components:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        status = str(row.get("status") or "")
+        if not name or not status:
+            continue
+        group = row.get("group")
+        group_name = str(group.get("name") or "") if isinstance(group, dict) else ""
+        out.append({"name": name, "status": status, "group": group_name})
+    return out
+
+
 def core_down(components: list[dict[str, Any]]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for row in components:
@@ -244,10 +260,11 @@ def news_event(ev: dict[str, Any], resolved: bool = False) -> str:
     title = ev.get("name") or "Polymarket 服务异常"
     link = ev.get("url") or PAGE_URL
     if resolved:
+        official = f"官方页面：{link}。" if link and link.rstrip("/") != PAGE_URL.rstrip("/") else ""
         return (
             f"据吴说数据中心统计，截至 {stamp}（UTC+8），Polymarket 官方状态页显示，"
-            f"「{title}」已恢复/结束。"
-            f"\n{link}"
+            f"「{title}」已恢复/结束。{official}"
+            f"\n详见：{DASHBOARD}"
         )
     phase = status_zh(str(ev.get("status") or ""))
     start = fmt_cn_time(str(ev.get("start") or ""))
@@ -255,10 +272,11 @@ def news_event(ev: dict[str, Any], resolved: bool = False) -> str:
     msg = clip(str(ev.get("message") or ""))
     official = f"官方说明：{msg}" if msg else ""
     kind = "维护" if ev.get("kind") == "maintenance" else "故障"
+    source = f"官方页面：{link}。" if link and link.rstrip("/") != PAGE_URL.rstrip("/") else ""
     return (
         f"据吴说数据中心统计，截至 {stamp}（UTC+8），Polymarket 官方状态页显示，"
-        f"{kind}「{title}」，当前状态为{phase}。{when}{official}"
-        f"\n{link}"
+        f"{kind}「{title}」，当前状态为{phase}。{when}{official}{source}"
+        f"\n详见：{DASHBOARD}"
     )
 
 
@@ -267,7 +285,7 @@ def news_components(down: list[dict[str, str]]) -> str:
     bits = "、".join(f"{row['name']}（{status_zh(row['status'])}）" for row in down)
     return (
         f"据吴说数据中心统计，截至 {stamp}（UTC+8），Polymarket 官方状态页显示，{bits}。"
-        f"\n{PAGE_URL}"
+        f"\n详见：{DASHBOARD}"
     )
 
 
@@ -350,10 +368,13 @@ def main() -> int:
 
     write_json(
         {
+            "name": "polymarket_status",
             "updated_at": now_iso(),
             "source": SUMMARY_URL,
+            "page": DASHBOARD,
             "page_status": page_status,
             "events": events,
+            "components": component_rows(components),
             "components_down": down,
             "note": "只发最新故障/维护状态变化与恢复；首跑建基线不补历史；正常不发日常。",
         }
@@ -435,7 +456,7 @@ def main() -> int:
                 (
                     msg_id,
                     f"据吴说数据中心统计，截至 {stamp_cn()}（UTC+8），Polymarket 官方状态页显示整站状态为"
-                    f"{status_zh(page_status)}。\n{PAGE_URL}",
+                    f"{status_zh(page_status)}。\n详见：{DASHBOARD}",
                 )
             )
 

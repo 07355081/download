@@ -59,5 +59,12 @@ LOG="${LOG:-/var/log/dashboard-spot-break-liq.log}"
   mkdir -p /root/dashboard/public/json/sui-status
   cp -a sui-status/output/json/sui_status.json /root/dashboard/public/json/sui-status/sui_status.json \
     || echo "[$(date '+%F %T')] sui-status json warn"
+  ./.venv/bin/python edge-spot/download.py \
+    || echo "[$(date '+%F %T')] edge-spot download warn"
+  ./.venv/bin/python edge-spot/flash.py --push \
+    || echo "[$(date '+%F %T')] edge-spot flash warn"
+  mkdir -p /root/dashboard/public/json/edge-spot
+  cp -a edge-spot/output/json/edge_spot.json /root/dashboard/public/json/edge-spot/edge_spot.json \
+    || echo "[$(date '+%F %T')] edge-spot json warn"
   echo "[$(date '+%F %T')] done"
 } >>"$LOG" 2>&1

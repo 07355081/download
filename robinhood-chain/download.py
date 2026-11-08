@@ -13,6 +13,7 @@ dex_volume.sql),直接读 robinhood.transactions 与 dex.trades。其余仍用 a
   把新日期合并进本地历史。2026-09-23 之后、上传表停更造成的空档在首次执行时补过。
     别人的贵查询默认 max_age_hours=168(7 天):平时纯读缓存;只有对方停调度很久才自跑。
   launchpad_activity 单独 336h(14 天)——单次约 300~517 credits,不能按两三日节奏自跑。
+  rwa_volume 没有实测地板,估费按未测查询预占 500。也放到 336h,一个计费周期最多自跑一次。
 
 关于 launchpad_activity:
   全历史 query 8024180 一次大约 315 credits,已禁止自动执行。
@@ -157,7 +158,7 @@ def main() -> None:
                 "active_wallets": 168.0,  # ~7d; 单次 ~165 credits
                 "launchpad_new_tokens": 168.0,
                 "rwa_aum": 168.0,  # ~7d; 单次 ~138 credits
-                "rwa_volume": 168.0,
+                "rwa_volume": 336.0,  # ~14d; 未测,估费预占 500,一个周期最多一次
             },
         )
     finally:

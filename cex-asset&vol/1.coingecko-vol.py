@@ -34,7 +34,7 @@ API_KEY = (
 API_V3_BASE = "https://api.coingecko.com/api/v3"
 EXCHANGES_BASE_URL = f"{API_V3_BASE}/exchanges"
 EXCHANGES_LIST_URL = f"{EXCHANGES_BASE_URL}/list"
-MAX_REQUESTS_PER_MINUTE = 500
+MAX_REQUESTS_PER_MINUTE = 25
 MAX_DAYS = 365
 # CoinGecko days<=14 返回小时级点；累加会虚增约 24x。仅使用日级粒度选项。
 SUPPORTED_DAYS = (30, 90, 180, 365)
@@ -42,7 +42,9 @@ MIN_API_DAYS = 30
 DATE_COL = "日期"
 TOTAL_COL = "ALL"
 
-TARGET_CSV = BASE_DIR / "major_vol_切勿删除.csv"
+from _paths import MAJOR_VOL_CSV  # noqa: E402
+
+TARGET_CSV = MAJOR_VOL_CSV
 
 EXCHANGE_SPOT_FUTURES_PAIRS: list[tuple[str, str | None]] = [
     ("binance", "binance_futures"),
@@ -57,7 +59,8 @@ EXCHANGE_SPOT_FUTURES_PAIRS: list[tuple[str, str | None]] = [
     ("kucoin", "kumex"),
     ("mxc", "mxc_futures"),
     ("okex", "okex_swap"),
-    ("gdax", "coinbase_international_derivatives"),
+    # CoinGecko renamed coinbase_international_derivatives → coinbase_international
+    ("gdax", "coinbase_international"),
     ("kraken", "kraken_futures"),
     ("hyperliquid-spot", "hyperliquid"),
     ("upbit", None),

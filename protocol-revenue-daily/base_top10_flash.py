@@ -199,16 +199,25 @@ def main() -> int:
     asof = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     top = ranking[:TOP_N]
 
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload = {
+        "asof": asof,
+        "base": base,
+        "top": top,
+        "source": "DefiLlama dailyRevenue",
+        "fetched_at": fetched_at,
+    }
     doc = {
         "code": 0,
         "msg": "success",
-        "data": {
-            "asof": asof,
-            "base": base,
-            "top": top,
-            "source": "DefiLlama dailyRevenue",
-            "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        },
+        "name": "base_daily_revenue_rank",
+        "asof": asof,
+        "day": asof,
+        "base": base,
+        "top": top,
+        "source": "DefiLlama dailyRevenue",
+        "fetched_at": fetched_at,
+        "data": payload,
     }
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = OUT_PATH.with_suffix(".json.tmp")

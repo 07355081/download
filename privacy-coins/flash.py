@@ -93,9 +93,11 @@ def fmt_pct(pct: float | None) -> str:
 def build_news(doc: dict[str, Any]) -> tuple[str, str]:
     """Return (msg_id, news_text)."""
     cat = doc.get("category") or {}
+    infra = doc.get("infrastructure") or {}
     btc = doc.get("btc") or {}
     zec = doc.get("zec") or {}
     sector = doc.get("sector") or {}
+    spots = doc.get("spotlight") if isinstance(doc.get("spotlight"), list) else []
     as_of = str(doc.get("as_of") or "")[:10] or datetime.now(TZ_CN).strftime("%Y-%m-%d")
     day = as_of[:10]
     msg_id = f"privacy-coins-daily-{day}"
@@ -109,7 +111,10 @@ def build_news(doc: dict[str, Any]) -> tuple[str, str]:
     zec_share = zec.get("share_pct")
     zec_rank = zec.get("market_cap_rank")
     zec_1y = zec.get("price_change_1y_pct")
+    zec_7d = zec.get("price_change_7d_pct")
     zec_mcap = zec.get("market_cap_usd")
+    infra_mcap = infra.get("market_cap_usd")
+    infra_30 = infra.get("weighted_30d_pct")
 
     y, m, d = day.split("-")
     body = (
@@ -119,24 +124,43 @@ def build_news(doc: dict[str, Any]) -> tuple[str, str]:
         f"市值加权近 30 日约 {fmt_pct(float(w30) if w30 is not None else None)}，"
         f"近一年约 {fmt_pct(float(w1y) if w1y is not None else None)}。"
     )
+    if infra_mcap is not None or infra_30 is not None:
+        body += (
+            f"「Privacy Infrastructure」市值约 {fmt_yi(float(infra_mcap) if infra_mcap is not None else None)}，"
+            f"市值加权近 30 日约 {fmt_pct(float(infra_30) if infra_30 is not None else None)}。"
+        )
     if zec:
         body += (
             f"ZEC 市值约 {fmt_yi(float(zec_mcap) if zec_mcap is not None else None)}"
-            f"（全市场排名约第 {zec_rank}），约占该板块 "
+            f"（全市场排名约第 {zec_rank}），约占 Privacy Coins "
             f"{(f'{float(zec_share):.1f}%' if zec_share is not None else '—')}；"
-            f"近一年涨跌约 {fmt_pct(float(zec_1y) if zec_1y is not None else None)}。"
+            f"近 7 日约 {fmt_pct(float(zec_7d) if zec_7d is not None else None)}，"
+            f"近一年约 {fmt_pct(float(zec_1y) if zec_1y is not None else None)}。"
         )
+    spot_bits = []
+    for row in spots:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol") or "").upper()
+        if not sym:
+            continue
+        ch7 = row.get("price_change_7d_pct")
+        spot_bits.append(
+            f"{sym} 近 7 日约 {fmt_pct(float(ch7) if ch7 is not None else None)}"
+            f"（市值约 {fmt_yi(float(row['market_cap_usd']) if isinstance(row.get('market_cap_usd'), (int, float)) else None)}）"
+        )
+    if spot_bits:
+        body += "代表性相关代币：" + "；".join(spot_bits) + "。"
     if ex1y is not None:
-        body += f"剔除 ZEC 后，板块市值加权近一年约 {fmt_pct(float(ex1y))}。"
+        body += f"剔除 ZEC 后，Privacy Coins 市值加权近一年约 {fmt_pct(float(ex1y))}。"
     if btc_ath is not None:
-        body += (
-            f"同期比特币较历史最高点约 {fmt_pct(float(btc_ath))}。"
-        )
+        body += f"同期比特币较历史最高点约 {fmt_pct(float(btc_ath))}。"
     body += (
-        "口径为 CoinGecko 公开分类与市值加权涨跌，非 Glassnode 专有板块指数；数字可能与原文略有差异。"
+        "口径为 CoinGecko 公开分类（Privacy Coins / Privacy Infrastructure）与市值加权涨跌；"
+        "NEAR/RAIL 取自基础设施分类，数字可能与宽口径 privacy 页略有差异。"
         f"\n{DASHBOARD_URL}"
     )
-    title = "隐私币板块市值与 ZEC 占比"
+    title = "隐私币与隐私基础设施板块市值"
     return msg_id, f"{title}\n{body}"
 
 

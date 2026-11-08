@@ -4,6 +4,7 @@
 
 只发提交日在 10 天内、且未见过的最新一份业绩文件。
 更早的季度只记入已见，不补发。
+Strive（ASST）11 月只入库，12 月 1 日起发 11 月交的那份；更早的不补。
 """
 from __future__ import annotations
 
@@ -33,6 +34,9 @@ STATE_PATH = HERE / "output" / "crypto_earnings_lark.json"
 LOG_PATH = HERE / "flash.log"
 PAGE = "https://data.wublock123.com/dashboard/lark-feeds/crypto-earnings"
 FRESH_DAYS = 10
+# Strive 11 月只入库。12 月 1 日起：11 月交的最新一份补发一次，更早的不补。
+ASST_PUSH_FROM = "2026-12-01"
+ASST_HOLD_FROM = "2026-11-01"
 ENV_CANDIDATES = [
     Path("/root/dashboard/.env.live"),
     ROOT.parent / "data-dashboard" / ".env.live",
@@ -218,7 +222,16 @@ def main() -> int:
         age = age_days(filed)
         if age is None:
             continue
-        if age <= FRESH_DAYS:
+        ticker = str(row.get("ticker") or "")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if ticker == "ASST" and filed < ASST_HOLD_FROM:
+            stale.append(acc)
+            continue
+        if ticker == "ASST" and today < ASST_PUSH_FROM:
+            print(f"[hold] ASST {filed} 到 {ASST_PUSH_FROM} 再发")
+            continue
+        held_november = ticker == "ASST" and ASST_HOLD_FROM <= filed < ASST_PUSH_FROM
+        if age <= FRESH_DAYS or held_november:
             fresh.append(row)
         else:
             stale.append(acc)

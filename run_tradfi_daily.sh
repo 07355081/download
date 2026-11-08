@@ -34,6 +34,9 @@ fi
   echo "[$(ts)] 3b 股票永续成交 → Lark（仅新高/首次过关/分位/大变动，不回扫）..."
   $VENV tradfi/stock_perp_flash.py --push \
     || echo "[$(ts)] stock_perp_flash 失败(不影响下载)"
+  echo "[$(ts)] 3c 币安传统资产永续近7日与本月结构 → Lark（每周一条，不回扫）..."
+  $VENV tradfi/binance_tradfi_share_flash.py --push \
+    || echo "[$(ts)] binance_tradfi_share_flash 失败(不影响下载)"
   echo "[$(ts)] 4/6 刷新目录索引与数据契约(_indexes/ + _manifest.json)..."
   $VENV gen_dashboard_meta.py --dest /root/dashboard/public/json \
     || echo "[$(ts)] gen_dashboard_meta 失败(不影响数据本身)"

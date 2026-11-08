@@ -66,6 +66,14 @@ fi
   $VENV stablecoin/chain_mcap_flash.py --push --history-scan \
     || echo "[$(ts)]   [WARN] chain-mcap flash 失败,继续"
 
+  echo "[$(ts)] usdg-sol-usde flash → Lark（USDG 新穿 30 亿或 Solana USDe 日≥10 倍，首日建线）..."
+  $VENV stablecoin/usdg_sol_usde_flash.py --push \
+    || echo "[$(ts)]   [WARN] usdg-sol-usde flash 失败,继续"
+
+  echo "[$(ts)] usat flash → Lark（USA₮ 流通市值日常+阈值，DefiLlama，首日建线）..."
+  $VENV stablecoin/usat_flash.py --push \
+    || echo "[$(ts)]   [WARN] usat flash 失败,继续"
+
   echo "[$(ts)] usdt-eth-rank(CoinGecko USDT 市值超过 ETH，仅穿越)..."
   if $VENV usdt-eth-rank/download.py; then
     $VENV usdt-eth-rank/flash.py --push \
@@ -176,6 +184,15 @@ fi
     echo "[$(ts)] chain-app-revenue flash → Lark..."
     $VENV chain-app-revenue/flash.py --push --history-scan \
       || echo "[$(ts)]   [WARN] chain-app-revenue flash 失败,继续"
+    echo "[$(ts)] chain-app-revenue monthly → Lark（最近闭合月，月后14天内一条）..."
+    if $VENV chain-app-revenue/monthly_flash.py --push; then
+      mkdir -p /root/dashboard/public/json/chain-app-revenue
+      cp -a chain-app-revenue/output/json/chain_app_revenue_monthly.json \
+        /root/dashboard/public/json/chain-app-revenue/chain_app_revenue_monthly.json \
+        || echo "[$(ts)]   [WARN] chain-app-revenue monthly json 镜像失败,继续"
+    else
+      echo "[$(ts)]   [WARN] chain-app-revenue monthly flash 失败,继续"
+    fi
   else
     echo "[$(ts)]   [WARN] chain-app-revenue 失败,继续"
   fi
@@ -190,6 +207,19 @@ fi
       || echo "[$(ts)]   [WARN] hl-net-revenue flash 失败,继续"
   else
     echo "[$(ts)]   [WARN] hl-net-revenue 失败,继续"
+  fi
+
+  # Hyperliquid HIP-3 非 Core 可交易市场数（近邻 Blockworks 全行业 RWA 标的数）。名单变化才推；不补 8→178。
+  echo "[$(ts)] hl-hip3-markets(Hyperliquid HIP-3 可交易市场数，名单变化才推)..."
+  if $VENV hl-hip3-markets/download.py; then
+    mkdir -p /root/dashboard/public/json/hl-hip3-markets
+    cp -a hl-hip3-markets/output/json/hl_hip3_markets.json \
+      /root/dashboard/public/json/hl-hip3-markets/hl_hip3_markets.json \
+      || echo "[$(ts)]   [WARN] hl-hip3-markets json 镜像失败,继续"
+    $VENV hl-hip3-markets/flash.py --push \
+      || echo "[$(ts)]   [WARN] hl-hip3-markets flash 失败,继续"
+  else
+    echo "[$(ts)]   [WARN] hl-hip3-markets 失败,继续"
   fi
 
   # 近似 Glassnode「自 BTC ATH 前50跑赢」：今日名单 + ATH 日起相对倍数；ALT50_FLASH_PUSH=0 可关。
@@ -258,6 +288,30 @@ fi
     else
       echo "[$(ts)]   [WARN] stock compare 下载失败,继续"
     fi
+
+    echo "[$(ts)] xstocks-dune（只读 Dune 缓存，不 execute）..."
+    if $VENV xstocks-dune/download.py; then
+      mkdir -p /root/dashboard/public/json/xstocks-dune
+      cp -a xstocks-dune/output/json/xstocks_dune.json \
+        /root/dashboard/public/json/xstocks-dune/xstocks_dune.json \
+        || echo "[$(ts)]   [WARN] xstocks-dune json 镜像失败,继续"
+      $VENV xstocks-dune/flash.py --push \
+        || echo "[$(ts)]   [WARN] xstocks-dune flash 失败,继续"
+    else
+      echo "[$(ts)]   [WARN] xstocks-dune 失败,继续"
+    fi
+
+    echo "[$(ts)] ton-trading-bots（只读 Dune xRocket 缓存，不 execute）..."
+    if $VENV ton-trading-bots/download.py; then
+      mkdir -p /root/dashboard/public/json/ton-trading-bots
+      cp -a ton-trading-bots/output/json/ton_trading_bots.json \
+        /root/dashboard/public/json/ton-trading-bots/ton_trading_bots.json \
+        || echo "[$(ts)]   [WARN] ton-trading-bots json 镜像失败,继续"
+      $VENV ton-trading-bots/flash.py --push \
+        || echo "[$(ts)]   [WARN] ton-trading-bots flash 失败,继续"
+    else
+      echo "[$(ts)]   [WARN] ton-trading-bots 失败,继续"
+    fi
   else
     echo "[$(ts)]   [WARN] robinhood-chain 失败,继续"
   fi
@@ -323,6 +377,18 @@ fi
       || echo "[$(ts)]   [WARN] lab-spot json 镜像失败,继续"
   else
     echo "[$(ts)]   [WARN] lab-spot 失败,继续"
+  fi
+
+  echo "[$(ts)] edge-spot(OKX EDGE-USDT-SWAP + CoinGlass,无 Dune)..."
+  if $VENV edge-spot/download.py; then
+    echo "[$(ts)] edge-spot flash → Lark（仅过线新闻体）..."
+    $VENV edge-spot/flash.py --push \
+      || echo "[$(ts)]   [WARN] edge-spot flash 失败,继续"
+    mkdir -p /root/dashboard/public/json/edge-spot
+    cp -a edge-spot/output/json/edge_spot.json /root/dashboard/public/json/edge-spot/edge_spot.json \
+      || echo "[$(ts)]   [WARN] edge-spot json 镜像失败,继续"
+  else
+    echo "[$(ts)]   [WARN] edge-spot 失败,继续"
   fi
 
   echo "[$(ts)] spcx-liq(币安 SPCX 永续 + CoinGlass 24h 爆仓)..."
@@ -408,6 +474,19 @@ fi
       || echo "[$(ts)]   [WARN] aave-llama json 镜像失败,继续"
   else
     echo "[$(ts)]   [WARN] aave-llama 失败,继续"
+  fi
+
+  echo "[$(ts)] aave-v3-weth(DefiLlama Aave v3 ETH 池内 WETH 近似,无 Dune)..."
+  if $VENV aave-v3-weth/download.py; then
+    echo "[$(ts)] aave-v3-weth flash → Lark..."
+    $VENV aave-v3-weth/flash.py --push \
+      || echo "[$(ts)]   [WARN] aave-v3-weth flash 失败,继续"
+    mkdir -p /root/dashboard/public/json/aave-v3-weth
+    cp -a aave-v3-weth/output/json/aave_v3_weth.json \
+      /root/dashboard/public/json/aave-v3-weth/aave_v3_weth.json \
+      || echo "[$(ts)]   [WARN] aave-v3-weth json 镜像失败,继续"
+  else
+    echo "[$(ts)]   [WARN] aave-v3-weth 失败,继续"
   fi
 
   echo "[$(ts)] aave-v4-spokes(官方 GraphQL 存款/Spoke + Llama 近邻,无 Dune)..."
@@ -703,6 +782,19 @@ fi
     echo "[$(ts)]   [WARN] strive-btc 失败,继续"
   fi
 
+  echo "[$(ts)] crypto-earnings(SEC 业绩,含 Strive;11 月不发 Strive)..."
+  if $VENV crypto-earnings/download.py; then
+    echo "[$(ts)] crypto-earnings flash → Lark..."
+    $VENV crypto-earnings/flash.py --push \
+      || echo "[$(ts)]   [WARN] crypto-earnings flash 失败,继续"
+    mkdir -p /root/dashboard/public/json/crypto-earnings
+    cp -a crypto-earnings/output/json/crypto_earnings.json \
+      /root/dashboard/public/json/crypto-earnings/crypto_earnings.json \
+      || echo "[$(ts)]   [WARN] crypto-earnings json 镜像失败,继续"
+  else
+    echo "[$(ts)]   [WARN] crypto-earnings 失败,继续"
+  fi
+
   echo "[$(ts)] robinhood-usde(DefiLlama Robinhood Chain USDe,无 Dune)..."
   if $VENV robinhood-usde/download.py; then
     echo "[$(ts)] robinhood-usde flash → Lark..."
@@ -810,6 +902,52 @@ fi
   cp -a physical-tcg/output/json/physical_tcg.json \
     /root/dashboard/public/json/physical-tcg/physical_tcg.json \
     2>/dev/null || echo "[$(ts)]   [WARN] physical-tcg json 镜像失败,继续"
+  cp -a physical-tcg/chart.html /root/dashboard/public/json/physical-tcg/chart.html \
+    2>/dev/null || echo "[$(ts)]   [WARN] physical-tcg chart 镜像失败,继续"
+
+  echo "[$(ts)] pm-fees(DefiLlama 预测市场月费用/Polymarket ATH,无 Dune)..."
+  if $VENV pm-fees/download.py; then
+    mkdir -p /root/dashboard/public/json/pm-fees
+    cp -a pm-fees/output/json/pm_fees.json \
+      /root/dashboard/public/json/pm-fees/pm_fees.json \
+      || echo "[$(ts)]   [WARN] pm-fees json 镜像失败,继续"
+    $VENV pm-fees/flash.py --push \
+      || echo "[$(ts)]   [WARN] pm-fees flash 失败,继续"
+  else
+    echo "[$(ts)]   [WARN] pm-fees download 失败,继续"
+  fi
+
+  echo "[$(ts)] hyperevm-fees(DefiLlama Hyperliquid L1 日费用近季高点,无 Dune)..."
+  if $VENV hyperevm-fees/download.py; then
+    mkdir -p /root/dashboard/public/json/hyperevm-fees
+    cp -a hyperevm-fees/output/json/hyperevm_fees.json \
+      /root/dashboard/public/json/hyperevm-fees/hyperevm_fees.json \
+      || echo "[$(ts)]   [WARN] hyperevm-fees json 镜像失败,继续"
+    $VENV hyperevm-fees/flash.py --push \
+      || echo "[$(ts)]   [WARN] hyperevm-fees flash 失败,继续"
+  else
+    echo "[$(ts)]   [WARN] hyperevm-fees download 失败,继续"
+  fi
+
+  echo "[$(ts)] hype-staking-fees(DefiLlama HYPE 质押日费用,创序列新高才发,无 Dune)..."
+  if $VENV hype-staking-fees/flash.py --push; then
+    mkdir -p /root/dashboard/public/json/hype-staking-fees
+    cp -a hype-staking-fees/output/json/hype_staking_fees.json \
+      /root/dashboard/public/json/hype-staking-fees/hype_staking_fees.json \
+      || echo "[$(ts)]   [WARN] hype-staking-fees json 镜像失败,继续"
+  else
+    echo "[$(ts)]   [WARN] hype-staking-fees 失败,继续"
+  fi
+
+  echo "[$(ts)] gmtrade-volume(GMTrade Solana 永续日成交,公开 GraphQL,无 Dune)..."
+  if $VENV solana-perp-vol/flash.py --push; then
+    mkdir -p /root/dashboard/public/json/gmtrade-volume
+    cp -a solana-perp-vol/output/json/gmtrade_volume.json \
+      /root/dashboard/public/json/gmtrade-volume/gmtrade_volume.json \
+      || echo "[$(ts)]   [WARN] gmtrade-volume json 镜像失败,继续"
+  else
+    echo "[$(ts)]   [WARN] gmtrade-volume 失败,继续"
+  fi
 
   echo "[$(ts)] protocol-revenue-monthly(DefiLlama 自然月收入 Top15,无 Dune)..."
   if $VENV protocol-revenue-monthly/download.py; then
@@ -845,6 +983,32 @@ fi
   $VENV mining-shutdown-price/run_all.py --skip-bitinfocharts \
     || echo "[$(ts)]   [WARN] mining-shutdown-price 失败,继续"
 
+  echo "[$(ts)] btc-hashprice(Firsthand USD/PH/s/日 + mempool 手续费占比)..."
+  if $VENV btc-hashprice/download.py; then
+    mkdir -p /root/dashboard/public/json/btc-hashprice
+    cp -a btc-hashprice/output/json/btc_hashprice.json \
+      /root/dashboard/public/json/btc-hashprice/btc_hashprice.json \
+      || echo "[$(ts)]   [WARN] btc-hashprice json 镜像失败,继续"
+    echo "[$(ts)] btc-hashprice flash → Lark..."
+    $VENV btc-hashprice/flash.py --push \
+      || echo "[$(ts)]   [WARN] btc-hashprice flash 失败,继续"
+  else
+    echo "[$(ts)]   [WARN] btc-hashprice 失败,继续"
+  fi
+
+  echo "[$(ts)] btc-hashrate-puell(算力7日均 + Puell；不含矿工持仓)..."
+  if $VENV btc-hashrate-puell/download.py; then
+    mkdir -p /root/dashboard/public/json/btc-hashrate-puell
+    cp -a btc-hashrate-puell/output/json/btc_hashrate_puell.json \
+      /root/dashboard/public/json/btc-hashrate-puell/btc_hashrate_puell.json \
+      || echo "[$(ts)]   [WARN] btc-hashrate-puell json 镜像失败,继续"
+    echo "[$(ts)] btc-hashrate-puell flash → Lark..."
+    $VENV btc-hashrate-puell/flash.py --push \
+      || echo "[$(ts)]   [WARN] btc-hashrate-puell flash 失败,继续"
+  else
+    echo "[$(ts)]   [WARN] btc-hashrate-puell 失败,继续"
+  fi
+
   echo "[$(ts)] 10/12 cex-asset&vol(CoinGecko vol + DefiLlama assets/BTC)..."
   $VENV "cex-asset&vol/run_all.py" --vol-mode append \
     || echo "[$(ts)]   [WARN] cex-asset&vol 失败,继续"
@@ -874,6 +1038,19 @@ fi
     echo "[$(ts)]   [WARN] treasury platforms 失败,继续"
   fi
 
+  echo "[$(ts)] tokenized-treasury-products(CoinGecko 产品市值近似,无 Dune)..."
+  if $VENV tokenized-treasury-products/download.py; then
+    echo "[$(ts)] tokenized-treasury-products flash → Lark..."
+    $VENV tokenized-treasury-products/flash.py --push \
+      || echo "[$(ts)]   [WARN] tokenized-treasury-products flash 失败,继续"
+    mkdir -p /root/dashboard/public/json/tokenized-treasury-products
+    cp -a tokenized-treasury-products/output/json/tokenized_treasury_products.json \
+      /root/dashboard/public/json/tokenized-treasury-products/tokenized_treasury_products.json \
+      || echo "[$(ts)]   [WARN] tokenized-treasury-products json 镜像失败,继续"
+  else
+    echo "[$(ts)]   [WARN] tokenized-treasury-products 失败,继续"
+  fi
+
   echo "[$(ts)] eth-mmf BENJI/BUIDL 以太坊市值（rwa.xyz，领先变更才发）..."
   if $VENV eth-mmf/download.py; then
     mkdir -p /root/dashboard/public/json/eth-mmf
@@ -883,6 +1060,18 @@ fi
       || echo "[$(ts)]   [WARN] eth-mmf flash 失败,继续"
   else
     echo "[$(ts)]   [WARN] eth-mmf 失败,继续"
+  fi
+
+  echo "[$(ts)] protocol-revenue-ex（DefiLlama 近一年收入，不含稳定币发行商和公链）..."
+  if $VENV protocol-revenue-ex/download.py; then
+    mkdir -p /root/dashboard/public/json/protocol-revenue-ex
+    cp -a protocol-revenue-ex/output/json/protocol_revenue_ex.json \
+      /root/dashboard/public/json/protocol-revenue-ex/protocol_revenue_ex.json \
+      || echo "[$(ts)]   [WARN] protocol-revenue-ex json 镜像失败,继续"
+    $VENV protocol-revenue-ex/flash.py --push \
+      || echo "[$(ts)]   [WARN] protocol-revenue-ex flash 失败,继续"
+  else
+    echo "[$(ts)]   [WARN] protocol-revenue-ex 失败,继续"
   fi
 
   echo "[$(ts)] eth-tokenized-treasuries（rwa.xyz Ethereum 合计，ATH/大涨才发）..."
@@ -897,14 +1086,29 @@ fi
     echo "[$(ts)]   [WARN] eth-tokenized-treasuries 失败,继续"
   fi
 
+  echo "[$(ts)] bnb-chain-rwa（rwa.xyz BNB Chain 合计，ATH/大涨才发）..."
+  if $VENV bnb-chain-rwa/download.py; then
+    mkdir -p /root/dashboard/public/json/bnb-chain-rwa
+    cp -a bnb-chain-rwa/output/json/bnb_chain_rwa.json \
+      /root/dashboard/public/json/bnb-chain-rwa/bnb_chain_rwa.json \
+      || echo "[$(ts)]   [WARN] bnb-chain-rwa json 镜像失败,继续"
+    $VENV bnb-chain-rwa/flash.py --push \
+      || echo "[$(ts)]   [WARN] bnb-chain-rwa flash 失败,继续"
+  else
+    echo "[$(ts)]   [WARN] bnb-chain-rwa 失败,继续"
+  fi
+
   echo "[$(ts)] prediction-markets(DefiLlama 季度名义成交)..."
   if $VENV prediction-markets/download.py; then
     cp -a prediction-markets/output/json/prediction_markets_quarterly.json \
       /root/dashboard/public/json/prediction_markets_quarterly.json \
       || echo "[$(ts)]   [WARN] prediction-markets json 镜像失败,继续"
+    $VENV prediction-markets/monthly_flash.py --push \
+      || echo "[$(ts)]   [WARN] prediction-markets monthly_flash 失败,继续"
   else
     echo "[$(ts)]   [WARN] prediction-markets 失败,继续"
   fi
+
 
   echo "[$(ts)] pm-weekly(近7日成交与未平仓，只推最新一条)..."
   if $VENV pm-weekly/download.py; then

@@ -140,6 +140,159 @@ def tcg_series(days: dict[str, Any], ranked: list[tuple[str, float]], names: dic
     return series
 
 
+def window_rank(protocols: list[dict[str, Any]], key: str, limit: int = 8) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in protocols:
+        slug = row.get("slug")
+        val = row.get(key)
+        if not isinstance(slug, str) or not isinstance(val, (int, float)) or val <= 0:
+            continue
+        rows.append({
+            "slug": slug,
+            "name": str(row.get("displayName") or row.get("name") or slug),
+            "usd": round(float(val), 2),
+        })
+    rows.sort(key=lambda item: -item["usd"])
+    return rows[:limit]
+
+
+def sum_metric(protocols: list[dict[str, Any]], key: str) -> float:
+    total = 0.0
+    for row in protocols:
+        val = row.get(key)
+        if isinstance(val, (int, float)):
+            total += float(val)
+    return round(total, 2)
+
+
+def ingest_chart(doc: dict[str, Any], days: dict[str, dict[str, float]], slug: str) -> None:
+    for pt in doc.get("totalDataChart") or []:
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+            continue
+        try:
+            day = datetime.fromtimestamp(int(pt[0]), tz=timezone.utc).strftime("%Y-%m-%d")
+            val = float(pt[1] or 0)
+        except (TypeError, ValueError, OSError):
+            continue
+        days.setdefault(day, {})[slug] = val
+
+
+def month_points(days: dict[str, dict[str, float]], slugs: set[str]) -> list[dict[str, Any]]:
+    buckets: dict[str, float] = {}
+    for day, row in days.items():
+        if not isinstance(row, dict) or len(day) < 7:
+            continue
+        total = 0.0
+        for slug, val in row.items():
+            if slug in slugs and isinstance(val, (int, float)):
+                total += float(val)
+        if total:
+            buckets[day[:7]] = buckets.get(day[:7], 0.0) + total
+    return [{"month": key, "usd": round(val, 2)} for key, val in sorted(buckets.items())]
+
+
+def load_gecko_env() -> None:
+    path = ROOT / ".env"
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        text = line.strip().lstrip("\ufeff")
+        if not text or text.startswith("#") or "=" not in text:
+            continue
+        key, value = text.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def gecko_json(path: str) -> Any:
+    load_gecko_env()
+    key = (
+        os.environ.get("COINGECKO_DEMO_API_KEY")
+        or os.environ.get("COINGECKO_KEY")
+        or os.environ.get("COINGECKO_API_KEY")
+        or ""
+    ).strip()
+    headers = {"User-Agent": UA, "Accept": "application/json"}
+    if key:
+        headers["x-cg-demo-api-key"] = key
+    url = "https://api.coingecko.com/api/v3" + path
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=40) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def pair_points(pairs: Any, ndigits: int) -> list[dict[str, Any]]:
+    by_day: dict[str, float] = {}
+    if not isinstance(pairs, list):
+        return []
+    for pair in pairs:
+        if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+            continue
+        try:
+            day = datetime.fromtimestamp(float(pair[0]) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            by_day[day] = round(float(pair[1]), ndigits)
+        except (TypeError, ValueError, OSError):
+            continue
+    return [{"month": day, "usd": val} for day, val in sorted(by_day.items())]
+
+
+def load_volume() -> tuple[dict[str, str], dict[str, dict[str, float]], list[dict[str, Any]]]:
+    try:
+        overview = http_json(
+            API + "/overview/dexs?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true"
+        )
+    except RuntimeError as exc:
+        print(f"[warn] 成交额总表: {exc}")
+        return {}, {}, []
+    protocols = [
+        p for p in (overview.get("protocols") or [])
+        if isinstance(p, dict) and p.get("category") == CATEGORY and isinstance(p.get("slug"), str)
+    ]
+    names = {
+        p["slug"]: str(p.get("displayName") or p.get("name") or p["slug"])
+        for p in protocols
+    }
+    days: dict[str, dict[str, float]] = {}
+    for slug in sorted(names):
+        url = API + "/summary/dexs/" + urllib.parse.quote(slug, safe=".-_")
+        try:
+            doc = http_json(url)
+        except RuntimeError as exc:
+            print(f"[warn] 成交额 {slug}: {exc}")
+            continue
+        ingest_chart(doc, days, slug)
+        time.sleep(0.12)
+    return names, days, window_rank(protocols, "total24h")
+
+
+def load_cards_token() -> dict[str, Any] | None:
+    try:
+        spot = gecko_json(
+            "/coins/collector-crypt?localization=false&tickers=false&community_data=false&developer_data=false"
+        )
+        chart = gecko_json("/coins/collector-crypt/market_chart?vs_currency=usd&days=180&interval=daily")
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        print(f"[warn] CoinGecko CARDS: {exc}")
+        return None
+    market = spot.get("market_data") if isinstance(spot, dict) else None
+    if not isinstance(market, dict) or not isinstance(chart, dict):
+        return None
+    price = (market.get("current_price") or {}).get("usd")
+    mcap = (market.get("market_cap") or {}).get("usd")
+    volume = (market.get("total_volume") or {}).get("usd")
+    return {
+        "symbol": "CARDS",
+        "name": "Collector Crypt",
+        "price_usd": price if isinstance(price, (int, float)) else None,
+        "mcap_usd": mcap if isinstance(mcap, (int, float)) else None,
+        "volume_24h_usd": volume if isinstance(volume, (int, float)) else None,
+        "price_series": pair_points(chart.get("prices"), 6),
+        "mcap_series": pair_points(chart.get("market_caps"), 2),
+    }
+
+
 def http_json(url: str) -> Any:
     last: Exception | None = None
     for attempt in range(1, 4):
@@ -260,15 +413,7 @@ def main() -> int:
         except RuntimeError as exc:
             print(f"[ERROR] {exc}", file=sys.stderr)
             return 1
-        for pt in doc.get("totalDataChart") or []:
-            if not isinstance(pt, (list, tuple)) or len(pt) < 2:
-                continue
-            try:
-                day = datetime.fromtimestamp(int(pt[0]), tz=timezone.utc).strftime("%Y-%m-%d")
-                val = float(pt[1] or 0)
-            except (TypeError, ValueError, OSError):
-                continue
-            days.setdefault(day, {})[slug] = val
+        ingest_chart(doc, days, slug)
         time.sleep(0.15)
 
     today = datetime.now(timezone.utc).date()
@@ -305,14 +450,61 @@ def main() -> int:
         ],
         "days": {day: {slug: round(val, 2) for slug, val in row.items()} for day, row in sorted(days.items())},
         "series": tcg_series(days, ranked, names),
+        "fee_windows": {
+            "h24": sum_metric(protocols, "total24h"),
+            "d7": sum_metric(protocols, "total7d"),
+            "d30": round(latest_total, 2),
+            "y1": sum_metric(protocols, "total1y"),
+            "all_time": sum_metric(protocols, "totalAllTime"),
+        },
+        "months": [row for row in month_points(days, slugs) if row["month"] < today.strftime("%Y-%m")],
+        "fee_24h": window_rank(protocols, "total24h"),
     }
+    closed_month = today.strftime("%Y-%m")
+    volume_names, volume_days, volume_24h = load_volume()
+    if volume_24h:
+        payload["volume_24h"] = volume_24h
+    if volume_names and volume_days:
+        vol_ends = sorted(day for day in volume_days if day < today.isoformat())
+        if vol_ends:
+            vol_latest = vol_ends[-1]
+            vol_total, vol_parts = window_sum(volume_days, vol_latest, set(volume_names))
+            vol_ranked = sorted(vol_parts.items(), key=lambda kv: -kv[1])
+            payload["volume_day"] = vol_latest
+            payload["volume_30d_usd"] = round(vol_total, 2)
+            payload["volume_top"] = [
+                {"slug": slug, "name": volume_names.get(slug, slug), "usd": round(val, 2)}
+                for slug, val in vol_ranked[:8]
+                if val > 0
+            ]
+            payload["volume_series"] = tcg_series(volume_days, vol_ranked, volume_names)
+            if payload["volume_series"]:
+                payload["volume_series"][0]["label"] = "当日成交额合计"
+                payload["volume_series"][0]["labelEn"] = "Daily volume"
+            payload["volume_months"] = [
+                row for row in month_points(volume_days, set(volume_names))
+                if row["month"] < closed_month
+            ]
+    token = load_cards_token()
+    if token:
+        payload["token"] = {
+            "symbol": token["symbol"],
+            "name": token["name"],
+            "price_usd": token["price_usd"],
+            "mcap_usd": token["mcap_usd"],
+            "volume_24h_usd": token["volume_24h_usd"],
+        }
+        payload["token_price_series"] = token["price_series"]
+        payload["token_mcap_series"] = token["mcap_series"]
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = OUT_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
     tmp.replace(OUT_PATH)
     print(
-        f"[physical-tcg] latest={latest} age={age}d total={latest_total:.0f} "
-        f"prior={None if prior_best is None else round(prior_best[1])} ath={is_ath}"
+        f"[physical-tcg] latest={latest} age={age}d fees30={latest_total:.0f} "
+        f"vol30={payload.get('volume_30d_usd')} "
+        f"cards={None if token is None else token.get('price_usd')} "
+        f"ath={is_ath}"
     )
 
     fresh = age <= FRESH_DAYS

@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 """Perp DEX 月成交与 Hyperliquid 份额 → Lark 新闻体。
 
-全行业日成交：PerpFinder /api/data/perps-chart（其页面写明上游为 DefiLlama）。
-Hyperliquid：CoinGecko 交易所成交量（BTC）乘当日比特币价格，换成美元。
-DefiLlama derivatives 接口为 402，不走 Pro，不占 Dune。
+全行业日成交：PerpFinder /api/data/perps-chart（上游 DefiLlama 日成交）。
+Hyperliquid 月成交：CoinGecko 交易所成交量（BTC）× 当日比特币价格。
+Lighter / Aster / edgeX：PerpFinder /api/data/perps 近 30 日成交（同属 DefiLlama 衍生品一类快照）。
+DefiLlama overview/derivatives 免费接口 402，不走 Pro，不占 Dune。
 
-只发最近一个已结束自然月，且月结后 10 日内：
-成交创本序列完整月新低，或 Hyperliquid 份额创完整月新高。
-不发日常，不回扫更早的月。
+只发最近一个已结束自然月，且月结后 14 日内一条新闻。
+不发日常流水，不回扫更早的月。
 """
 from __future__ import annotations
 
@@ -33,14 +33,25 @@ ROOT = HERE.parent
 OUT_PATH = HERE / "output" / "json" / "perp_dex_share.json"
 STATE_PATH = HERE / "output" / "perp_dex_share_lark.json"
 LOG_PATH = HERE / "flash.log"
-JSON_URL = "https://data.wublock123.com/dashboard/hyperliquid"
-PAGE = "https://data.wublock123.com/dashboard/hyperliquid"
+PAGE = "https://data.wublock123.com/dashboard/lark-feeds/perp-dex-share"
+CHART_PAGE = "https://data.wublock123.com/json/perp-dex-share/chart.html"
 PERP_URL = "https://perpfinder.com/api/data/perps-chart?days=400"
+PERPS_PROTO_URL = "https://perpfinder.com/api/data/perps"
 HL_URL = "https://api.coingecko.com/api/v3/exchanges/hyperliquid/volume_chart?days=365"
 BTC_URL = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=365&interval=daily"
 TZ_CN = timezone(timedelta(hours=8))
-FRESH_DAYS = 10
+FRESH_DAYS = 14
 MIN_HL_DAYS = 20
+# 新兴所：用近 30 日快照，不用日历月（免费源没有这些所的日历月序列）。
+EMERGING = (
+    ("Lighter", ("lighter perps",), ("lighterv2",)),
+    ("Aster", ("aster perps",), ("apollox",)),
+    ("edgeX", ("edgex v2",), ("edgex-v2",)),
+)
+DASHBOARD_COPIES = [
+    ROOT.parent / "data-dashboard" / "public" / "json" / "perp-dex-share" / "perp_dex_share.json",
+    Path("/root/dashboard/public/json/perp-dex-share/perp_dex_share.json"),
+]
 ENV_CANDIDATES = [
     Path("/root/dashboard/.env.live"),
     ROOT.parent / "data-dashboard" / ".env.live",
@@ -209,10 +220,12 @@ def month_rows(days: dict[str, dict[str, float]]) -> list[dict[str, Any]]:
         share = None
         if hl_n[ym] >= MIN_HL_DAYS and perp_sum[ym] > 0:
             share = hl_sum[ym] / perp_sum[ym] * 100
+        usd = round(perp_sum[ym], 2)
         rows.append({
             "month": ym,
             "complete": complete,
-            "perp_dex_usd": round(perp_sum[ym], 2),
+            "usd": usd,
+            "perp_dex_usd": usd,
             "hl_usd": round(hl_sum[ym], 2) if hl_n[ym] else None,
             "hl_days": hl_n[ym],
             "perp_days": perp_n[ym],
@@ -221,48 +234,131 @@ def month_rows(days: dict[str, dict[str, float]]) -> list[dict[str, Any]]:
     return rows
 
 
-def save_doc(days: dict[str, dict[str, float]], months: list[dict[str, Any]]) -> None:
+def fetch_emerging() -> list[dict[str, Any]]:
+    try:
+        doc = http_json(PERPS_PROTO_URL)
+    except (OSError, urllib.error.URLError, TimeoutError, RuntimeError, json.JSONDecodeError, ValueError) as exc:
+        print(f"[WARN] 近 30 日分所失败: {exc}", file=sys.stderr)
+        return []
+    protocols = doc.get("protocols") if isinstance(doc, dict) else None
+    if not isinstance(protocols, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for label, names, modules in EMERGING:
+        picked: dict[str, Any] | None = None
+        for item in protocols:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("displayName") or item.get("name") or "").strip().lower()
+            module = str(item.get("module") or "").strip().lower()
+            if name not in names and module not in modules:
+                continue
+            vol = item.get("total30d")
+            if not isinstance(vol, (int, float)) or vol <= 0:
+                continue
+            picked = item
+            break
+        if picked is None:
+            continue
+        out.append({
+            "name": label,
+            "usd": float(picked["total30d"]),
+            "amount": float(picked["total30d"]),
+        })
+    return out
+
+
+def decline_streak(complete: list[dict[str, Any]]) -> int:
+    streak = 0
+    for idx in range(len(complete) - 1, 0, -1):
+        if complete[idx]["perp_dex_usd"] < complete[idx - 1]["perp_dex_usd"] - 1:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def save_doc(
+    days: dict[str, dict[str, float]],
+    months: list[dict[str, Any]],
+    emerging: list[dict[str, Any]],
+) -> None:
     payload = {
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source": "PerpFinder perps-chart（DefiLlama 汇总）+ CoinGecko Hyperliquid 成交量×BTC 价格",
-        "note": "只在最近完整月创成交新低或 Hyperliquid 份额新高、且月结 10 日内发新闻。非 DefiLlama Pro。",
+        "source": "PerpFinder perps-chart（DefiLlama 汇总）+ CoinGecko Hyperliquid + PerpFinder /perps 近 30 日分所",
+        "note": "只发最近完整自然月一条新闻，月结 14 日内；不回扫。非 DefiLlama Pro。",
         "months": months,
+        "top": emerging,
         "days": [
             {
                 "day": day,
+                "usd": round(row["perp_dex_usd"], 2),
                 "perp_dex_usd": round(row["perp_dex_usd"], 2),
                 **({"hl_usd": round(row["hl_usd"], 2)} if "hl_usd" in row else {}),
             }
             for day, row in sorted(days.items())
         ],
     }
+    text = json.dumps(payload, ensure_ascii=False) + "\n"
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = OUT_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8")
     tmp.replace(OUT_PATH)
+    chart_src = HERE / "chart.html"
+    for dest in DASHBOARD_COPIES:
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+            if chart_src.is_file():
+                (dest.parent / "chart.html").write_text(chart_src.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            continue
 
 
 def yi(usd: float) -> str:
+    if usd >= 1e12:
+        return f"{usd / 1e12:.2f} 万亿美元"
     return f"{usd / 1e8:.0f} 亿美元"
 
 
-def build_news(latest: dict[str, Any], peak: dict[str, Any], vol_low: bool, share_high: bool) -> str:
-    drop = (peak["perp_dex_usd"] - latest["perp_dex_usd"]) / peak["perp_dex_usd"] * 100
-    bits = [f"据吴说数据中心统计，{latest['month']} Perp DEX 成交约 {yi(latest['perp_dex_usd'])}"]
-    if vol_low:
-        bits[0] += "，为本序列完整月新低"
-    bits[0] += "。"
-    bits.append(
-        f"峰值在 {peak['month']}，约 {yi(peak['perp_dex_usd'])}，本月较高点下降约 {drop:.1f}%。"
-    )
-    if latest.get("hl_share_pct") is not None:
-        share = (
-            f"同月 Hyperliquid 成交约 {yi(latest['hl_usd'])}，占 Perp DEX 约 {latest['hl_share_pct']:.1f}%"
+def cn_month(ym: str) -> str:
+    year, month = int(ym[:4]), int(ym[5:7])
+    return f"{year} 年 {month} 月"
+
+
+def build_news(
+    latest: dict[str, Any],
+    prev: dict[str, Any] | None,
+    peak: dict[str, Any],
+    streak: int,
+    emerging: list[dict[str, Any]],
+) -> str:
+    mom = None
+    if prev and prev["perp_dex_usd"] > 0:
+        mom = (latest["perp_dex_usd"] / prev["perp_dex_usd"] - 1) * 100
+    vs_peak = (latest["perp_dex_usd"] / peak["perp_dex_usd"] - 1) * 100
+    title_chg = f"，环比 {mom:+.1f}%" if mom is not None else ""
+    title = f"{cn_month(latest['month'])} Perp DEX 交易量达 {yi(latest['perp_dex_usd'])}{title_chg}"
+    body = f"据吴说数据中心统计，{cn_month(latest['month'])}，Perp DEX 合计成交约 {yi(latest['perp_dex_usd'])}"
+    if mom is not None and prev is not None:
+        direction = "升" if mom >= 0 else "降"
+        body += f"，较 {cn_month(prev['month'])}约 {yi(prev['perp_dex_usd'])}{direction}约 {abs(mom):.1f}%"
+    if streak >= 2:
+        body += f"，已连续 {streak} 个月下滑"
+    body += "。"
+    if peak["month"] != latest["month"]:
+        body += (
+            f"相比 {cn_month(peak['month'])}峰值约 {yi(peak['perp_dex_usd'])}"
+            f"{'低' if vs_peak < 0 else '高'}约 {abs(vs_peak):.1f}%。"
         )
-        if share_high:
-            share += "，为本序列完整月新高"
-        bits.append(share + "。")
-    return "".join(bits) + f"\n{PAGE}"
+    if latest.get("hl_share_pct") is not None and latest.get("hl_usd"):
+        body += (
+            f"其中 Hyperliquid 约 {yi(latest['hl_usd'])}（占 {latest['hl_share_pct']:.1f}%）位居首位。"
+        )
+    if emerging:
+        names = "、".join(f"{row['name']} 约 {yi(row['usd'])}" for row in emerging)
+        body += f"近 30 日成交仍居前列的新兴 Perp DEX 包括 {names}。"
+    return f"{title}\n\n{body}来源：PerpFinder / DefiLlama、CoinGecko\n{PAGE}\n{CHART_PAGE}"
 
 
 def main() -> int:
@@ -278,36 +374,28 @@ def main() -> int:
     days = load_saved_days()
     days.update(fresh)
     months = month_rows(days)
-    save_doc(days, months)
+    emerging = fetch_emerging()
+    save_doc(days, months, emerging)
     complete = [row for row in months if row["complete"]]
-    if len(complete) < 3:
+    if len(complete) < 2:
         print("[skip] 完整月不足")
         return 0
     latest = complete[-1]
-    prior = complete[:-1]
+    prev = complete[-2]
     peak = max(complete, key=lambda row: row["perp_dex_usd"])
-    vol_low = latest["perp_dex_usd"] < min(row["perp_dex_usd"] for row in prior) - 1
-    prior_shares = [row["hl_share_pct"] for row in prior if isinstance(row.get("hl_share_pct"), (int, float))]
-    share_high = (
-        isinstance(latest.get("hl_share_pct"), (int, float))
-        and bool(prior_shares)
-        and latest["hl_share_pct"] > max(prior_shares) + 0.1
-    )
+    streak = decline_streak(complete)
     year, month = int(latest["month"][:4]), int(latest["month"][5:7])
     ended = date(year, month, monthrange(year, month)[1])
     age = (datetime.now(timezone.utc).date() - ended).days
     print(
         f"[perp-dex-share] month={latest['month']} perp={latest['perp_dex_usd']/1e8:.0f}亿 "
         f"hl_share={latest.get('hl_share_pct')} peak={peak['month']} {peak['perp_dex_usd']/1e8:.0f}亿 "
-        f"vol_low={vol_low} share_high={share_high} age={age}d"
+        f"streak={streak} age={age}d emerging={[row['name'] for row in emerging]}"
     )
     if age > FRESH_DAYS and not args.force:
-        print("[skip] 最近完整月已超过 10 天")
+        print(f"[skip] 最近完整月已超过 {FRESH_DAYS} 天")
         return 0
-    if not vol_low and not share_high and not args.force:
-        print("[skip] 未创成交新低，份额也未创新高")
-        return 0
-    text = build_news(latest, peak, vol_low, share_high)
+    text = build_news(latest, prev, peak, streak, emerging)
     msg_id = f"perp-dex-share-{latest['month']}"
     print("---")
     print(f"id={msg_id}")

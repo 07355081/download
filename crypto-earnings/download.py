@@ -43,6 +43,7 @@ COMPANIES: list[tuple[str, str]] = [
     ("CAN", "Canaan"),
     ("GLXY", "Galaxy Digital"),
     ("SBET", "SharpLink"),
+    ("ASST", "Strive"),
 ]
 
 REVENUE_TAGS = (
@@ -200,7 +201,7 @@ def latest_earnings(cik: str) -> dict[str, Any] | None:
     accs = recent.get("accessionNumber") or []
     items = recent.get("items") or []
     docs = recent.get("primaryDocument") or []
-    for i, form in enumerate(forms[:40]):
+    for i, form in enumerate(forms):
         form = str(form)
         item = str(items[i] if i < len(items) else "")
         is_8k = form == "8-K" and "2.02" in item.split(",")

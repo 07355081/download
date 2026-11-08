@@ -44,14 +44,14 @@ DEFAULT_VPS_KEY = Path(
 REMOTE_CEX_DIR = "/root/data-download/cex-asset&vol"
 REMOTE_PIPELINE = f"{REMOTE_CEX_DIR}/cache/cex_volume_pipeline_unified.xlsx"
 
-# Exchange universe (from sample.xlsx)
+# Exchange universe (dashboard volume set; BitMart retired from site)
 SPOT_EXCHANGES = [
     "Binance", "OKX", "Bybit", "Coinbase", "Uniswap", "Kraken", "Bitget", "HTX",
-    "MEXC", "Gate", "BitMart", "Upbit", "KuCoin", "Bitfinex", "Crypto.com",
+    "MEXC", "Gate", "Upbit", "KuCoin", "Bitfinex", "Crypto.com",
 ]
 FUTURES_EXCHANGES = [
     "Binance", "OKX", "Bybit", "Coinbase", "Hyperliquid", "Bitget", "Gate", "HTX",
-    "BitMart", "Deribit", "Kraken", "KuCoin", "Crypto.com",
+    "Deribit", "Kraken", "KuCoin", "Crypto.com",
 ]
 TRAFFIC_EXCHANGES = [
     "Binance", "OKX", "Coinbase", "KuCoin", "Bybit", "Bitget", "Kraken", "Upbit",
@@ -571,36 +571,52 @@ def build_value_sheet(
     as_int: bool,
     mom_digits: int,
 ) -> pd.DataFrame:
+    """Only exchanges with current-month data enter the sheet and SUM.
+
+    If an exchange cannot be measured this month, drop it entirely — including
+    its previous-month value — so MoM / SUM stay on a matched sample.
+    """
+
+    def fmt(v: float | None):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        return int(v) if as_int else round(v, 2)
+
     rows = []
     prev_sum = 0.0
     curr_sum = 0.0
+    matched = 0
     for ex in exchanges:
-        prev = prev_values.get(ex)
         curr = curr_values.get(ex)
+        if curr is None or (isinstance(curr, float) and pd.isna(curr)):
+            # 当月无法统计 → 不出现在表内，上月也不进入 SUM
+            continue
+        prev_raw = prev_values.get(ex)
+        prev = (
+            float(prev_raw)
+            if prev_raw is not None and not (isinstance(prev_raw, float) and pd.isna(prev_raw))
+            else None
+        )
+        curr_f = float(curr)
+        # SUM 只用「上下月都有数」的交集，避免一边缺数拉歪环比
         if prev is not None:
             prev_sum += prev
-        if curr is not None:
-            curr_sum += curr
-
-        def fmt(v: float | None):
-            if v is None:
-                return None
-            return int(v) if as_int else round(v, 2)
-
+            curr_sum += curr_f
+            matched += 1
         rows.append(
             {
                 "Exchange": ex,
                 prev_month: fmt(prev),
-                curr_month: fmt(curr),
-                "MoM %": mom_pct(prev, curr, digits=mom_digits),
+                curr_month: fmt(curr_f),
+                "MoM %": mom_pct(prev, curr_f, digits=mom_digits),
             }
         )
     rows.append(
         {
             "Exchange": "SUM",
-            prev_month: fmt(prev_sum),
-            curr_month: fmt(curr_sum),
-            "MoM %": mom_pct(prev_sum, curr_sum, digits=mom_digits),
+            prev_month: fmt(prev_sum if matched else None),
+            curr_month: fmt(curr_sum if matched else None),
+            "MoM %": mom_pct(prev_sum, curr_sum, digits=mom_digits) if matched else None,
         }
     )
     return pd.DataFrame(rows)

@@ -822,7 +822,7 @@ fi
     echo "[$(ts)]   [WARN] xrp-fees 失败,继续"
   fi
 
-  echo "[$(ts)] btc-network(CoinMetrics TxCnt + mempool.space,无微交易占比/无 Dune)..."
+  echo "[$(ts)] btc-network(CoinMetrics TxCnt+TxTfrCnt + mempool.space 历史,无微交易占比/无 Dune)..."
   if $VENV btc-network/download.py; then
     echo "[$(ts)] btc-network flash → Lark..."
     $VENV btc-network/flash.py --push \
